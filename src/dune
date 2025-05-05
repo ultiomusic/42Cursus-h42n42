@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (public_name h42n42_server)
+ (libraries eliom_lib lwt)
+ (preprocess (pps ppx_eliom))
+ (modes native js)
+ (js_of_ocaml (flags --pretty --source-map)))

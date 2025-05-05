@@ -1,0 +1,12 @@
+lib: [
+  "_build/install/default/lib/h42n42/META"
+  "_build/install/default/lib/h42n42/dune-package"
+  "_build/install/default/lib/h42n42/opam"
+]
+bin: [
+  "_build/install/default/bin/h42n42"
+]
+doc: [
+  "_build/install/default/doc/h42n42/LICENSE"
+  "_build/install/default/doc/h42n42/README.md"
+]

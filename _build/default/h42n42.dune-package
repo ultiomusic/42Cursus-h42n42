@@ -1,0 +1,8 @@
+(lang dune 3.18)
+(name h42n42)
+(version 0.1)
+(sections (lib .) (bin ../../bin) (doc ../../doc/h42n42))
+(files
+ (lib (META dune-package opam))
+ (bin (h42n42))
+ (doc (LICENSE README.md)))
