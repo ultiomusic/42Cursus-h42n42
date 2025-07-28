@@ -38,6 +38,7 @@
     global_data = runtime.caml_get_global_data(),
     cst = "",
     eliom_compilation_unit_id_eZ0b = "eZ0bjX",
+    global_data_path = [0, [0, "__global_data__", 0]],
     Eliom_content = global_data.Eliom_content,
     Eliom_service = global_data.Eliom_service,
     Lwt = global_data.Lwt,
@@ -46,7 +47,10 @@
     Eliom_registration = global_data.Eliom_registration,
     application_name = caml_call1(Eliom_client[18], 0);
    caml_call1(Eliom_client_core[56][3], eliom_compilation_unit_id_eZ0b);
-   var App = caml_call1(Eliom_registration[4], [0, application_name, 0]);
+   var
+    App =
+      caml_call1
+       (Eliom_registration[4], [0, application_name, global_data_path]);
    caml_call1(Eliom_client_core[56][3], eliom_compilation_unit_id_eZ0b);
    caml_call1(Eliom_client[19], 0);
    caml_call1(Eliom_client_core[56][3], eliom_compilation_unit_id_eZ0b);
@@ -58,15 +62,13 @@
         [0, "main_service"],
         [0,
          [0,
-          [0, cst_h42n42_eliom, 27, 735, 763],
-          [0, cst_h42n42_eliom, 27, 735, 763]]],
+          [0, cst_h42n42_eliom, 23, 715, 746],
+          [0, cst_h42n42_eliom, 23, 715, 746]]],
         "eZ0bjX1"),
-    cst_OCaml_Eliom_ile_taray_c_da =
-      "OCaml + Eliom ile taray\xc4\xb1c\xc4\xb1da \xc3\xa7al\xc4\xb1\xc5\x9fan sim\xc3\xbclasyon projeniz burada ba\xc5\x9fl\xc4\xb1yor.",
-    cst_Merhaba_H42N42 = "Merhaba H42N42!",
-    _a_ = [0, "h42n42.js", 0],
+    cst_Welcome_to_h42n42_beeligul = "Welcome to h42n42 beeligul!",
+    _a_ = [0, "js", [0, "h42n42.js", 0]],
     _b_ = [0, "css", [0, "h42n42.css", 0]],
-    cst_H42N42_Hello = "H42N42 Hello";
+    cst_h42n42 = "h42n42";
    caml_call11
     (App[2],
      0,
@@ -79,33 +81,31 @@
      0,
      main_service,
      0,
-     function(_c_, param){
+     function(param, _c_){
       var
        _d_ =
          [0,
-          caml_call1(Eliom_content[3][1][222], cst_OCaml_Eliom_ile_taray_c_da),
+          caml_call1(Eliom_content[3][1][222], cst_Welcome_to_h42n42_beeligul),
           0],
-       _e_ = [0, caml_call2(Eliom_content[3][1][244], 0, _d_), 0],
-       _f_ = [0, caml_call1(Eliom_content[3][1][222], cst_Merhaba_H42N42), 0],
-       _g_ = [0, caml_call2(Eliom_content[3][1][233], 0, _f_), _e_],
-       _h_ = caml_call2(Eliom_content[3][1][227], 0, _g_),
-       _i_ = caml_call1(Eliom_content[3][1][222], cst),
-       _j_ = caml_call1(Eliom_service[5], 0),
-       _k_ =
+       _e_ = [0, caml_call2(Eliom_content[3][1][233], 0, _d_), 0],
+       _f_ = caml_call2(Eliom_content[3][1][227], 0, _e_),
+       _g_ = caml_call1(Eliom_content[3][1][322], cst),
+       _h_ = caml_call1(Eliom_service[5], 0),
+       _i_ =
          caml_call10
-          (Eliom_content[3][1][349], 0, 0, 0, _j_, 0, 0, 0, 0, 0, _a_),
-       _l_ = [0, [0, caml_call1(Eliom_content[3][1][178], _k_), 0]],
-       _m_ = [0, caml_call2(Eliom_content[3][1][329], _l_, _i_), 0],
-       _n_ = caml_call1(Eliom_service[5], 0),
-       _o_ =
+          (Eliom_content[3][1][349], 0, 0, 0, _h_, 0, 0, 0, 0, 0, _a_),
+       _j_ = [0, [0, caml_call1(Eliom_content[3][1][178], _i_), 0]],
+       _k_ = [0, caml_call2(Eliom_content[3][1][329], _j_, _g_), 0],
+       _l_ = caml_call1(Eliom_service[5], 0),
+       _m_ =
          caml_call10
-          (Eliom_content[3][1][349], 0, 0, 0, _n_, 0, 0, 0, 0, 0, _b_),
-       _p_ = [0, caml_call3(Eliom_content[3][1][351], 0, _o_, 0), _m_],
-       _q_ = caml_call1(Eliom_content[3][1][222], cst_H42N42_Hello),
-       _r_ = caml_call2(Eliom_content[3][1][226], 0, _q_),
-       _s_ = caml_call3(Eliom_content[3][1][224], 0, _r_, _p_),
-       _t_ = caml_call3(Eliom_content[3][1][223], 0, _s_, _h_);
-      return caml_call1(Lwt[4], _t_);
+          (Eliom_content[3][1][349], 0, 0, 0, _l_, 0, 0, 0, 0, 0, _b_),
+       _n_ = [0, caml_call3(Eliom_content[3][1][351], 0, _m_, 0), _k_],
+       _o_ = caml_call1(Eliom_content[3][1][222], cst_h42n42),
+       _p_ = caml_call2(Eliom_content[3][1][226], 0, _o_),
+       _q_ = caml_call3(Eliom_content[3][1][224], 0, _p_, _n_),
+       _r_ = caml_call3(Eliom_content[3][1][223], 0, _q_, _f_);
+      return caml_call1(Lwt[4], _r_);
      });
    caml_call1(Eliom_client_core[56][3], eliom_compilation_unit_id_eZ0b);
    var H42n42 = [0];
