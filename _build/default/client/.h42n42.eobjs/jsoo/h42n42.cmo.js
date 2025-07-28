@@ -70,10 +70,10 @@
           [0, cst_h42n42_eliom, 23, 715, 746],
           [0, cst_h42n42_eliom, 23, 715, 746]]],
         "eZ0bjX1"),
+    _a_ = [0, cst_js, [0, "movement.js", 0]],
+    _b_ = [0, cst_js, [0, "h42n42.js", 0]],
     cst_creet = "creet",
     cst_Welcome_to_h42n42_beeligul = "Welcome to h42n42 beeligul!",
-    _a_ = [0, cst_js, [0, "h42n42.js", 0]],
-    _b_ = [0, cst_js, [0, "movement.js", 0]],
     _c_ = [0, "css", [0, "h42n42.css", 0]],
     cst_h42n42 = "h42n42";
    caml_call11
@@ -90,37 +90,37 @@
      0,
      function(param, _d_){
       var
-       _e_ = [0, [0, caml_call1(Eliom_content[3][1][8], cst_creet), 0]],
-       _f_ = [0, caml_call2(Eliom_content[3][1][248], _e_, 0), 0],
+       _e_ = caml_call1(Eliom_content[3][1][322], cst),
+       _f_ = caml_call1(Eliom_service[5], 0),
        _g_ =
-         [0,
-          caml_call1(Eliom_content[3][1][222], cst_Welcome_to_h42n42_beeligul),
-          0],
-       _h_ = [0, caml_call2(Eliom_content[3][1][233], 0, _g_), _f_],
-       _i_ = caml_call2(Eliom_content[3][1][227], 0, _h_),
-       _j_ = caml_call1(Eliom_content[3][1][322], cst),
+         caml_call10
+          (Eliom_content[3][1][349], 0, 0, 0, _f_, 0, 0, 0, 0, 0, _a_),
+       _h_ = [0, [0, caml_call1(Eliom_content[3][1][178], _g_), 0]],
+       _i_ = [0, caml_call2(Eliom_content[3][1][329], _h_, _e_), 0],
+       _j_ = caml_call1(Eliom_content[3][1][322], cst$0),
        _k_ = caml_call1(Eliom_service[5], 0),
        _l_ =
          caml_call10
-          (Eliom_content[3][1][349], 0, 0, 0, _k_, 0, 0, 0, 0, 0, _a_),
+          (Eliom_content[3][1][349], 0, 0, 0, _k_, 0, 0, 0, 0, 0, _b_),
        _m_ = [0, [0, caml_call1(Eliom_content[3][1][178], _l_), 0]],
-       _n_ = [0, caml_call2(Eliom_content[3][1][329], _m_, _j_), 0],
-       _o_ = caml_call1(Eliom_content[3][1][322], cst$0),
-       _p_ = caml_call1(Eliom_service[5], 0),
+       _n_ = [0, caml_call2(Eliom_content[3][1][329], _m_, _j_), _i_],
+       _o_ = [0, [0, caml_call1(Eliom_content[3][1][8], cst_creet), 0]],
+       _p_ = [0, caml_call2(Eliom_content[3][1][248], _o_, 0), _n_],
        _q_ =
-         caml_call10
-          (Eliom_content[3][1][349], 0, 0, 0, _p_, 0, 0, 0, 0, 0, _b_),
-       _r_ = [0, [0, caml_call1(Eliom_content[3][1][178], _q_), 0]],
-       _s_ = [0, caml_call2(Eliom_content[3][1][329], _r_, _o_), _n_],
+         [0,
+          caml_call1(Eliom_content[3][1][222], cst_Welcome_to_h42n42_beeligul),
+          0],
+       _r_ = [0, caml_call2(Eliom_content[3][1][233], 0, _q_), _p_],
+       _s_ = caml_call2(Eliom_content[3][1][227], 0, _r_),
        _t_ = caml_call1(Eliom_service[5], 0),
        _u_ =
          caml_call10
           (Eliom_content[3][1][349], 0, 0, 0, _t_, 0, 0, 0, 0, 0, _c_),
-       _v_ = [0, caml_call3(Eliom_content[3][1][351], 0, _u_, 0), _s_],
+       _v_ = [0, caml_call3(Eliom_content[3][1][351], 0, _u_, 0), 0],
        _w_ = caml_call1(Eliom_content[3][1][222], cst_h42n42),
        _x_ = caml_call2(Eliom_content[3][1][226], 0, _w_),
        _y_ = caml_call3(Eliom_content[3][1][224], 0, _x_, _v_),
-       _z_ = caml_call3(Eliom_content[3][1][223], 0, _y_, _i_);
+       _z_ = caml_call3(Eliom_content[3][1][223], 0, _y_, _s_);
       return caml_call1(Lwt[4], _z_);
      });
    caml_call1(Eliom_client_core[56][3], eliom_compilation_unit_id_eZ0b);

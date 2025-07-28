@@ -29,17 +29,22 @@
            html
              (head
                 (title (txt "h42n42"))
-                [ css_link
-                    ~uri:(make_uri ~service:(Eliom_service.static_dir ()) ["css"; "h42n42.css"])
-                    ()
+                [ css_link ~uri:(make_uri ~service:(Eliom_service.static_dir ()) ["css"; "h42n42.css"])()]
+                )
+             (body
+                [ h1 [txt "Welcome to h42n42 beeligul!"]
+                ; div
+                    ~a: [ a_id "hospital"]
+                    []
+                (* buraya script etiketleri gelecek *)
                 ; script
-                  ~a:[ a_src (make_uri ~service:(Eliom_service.static_dir ()) ["js"; "movement.js"]) ]
-                  (cdata "")
-                ; script
-                    ~a:[ a_src (make_uri ~service:(Eliom_service.static_dir ()) ["js"; "h42n42.js"]) ]
+                     ~a:[ a_src (make_uri ~service:(Eliom_service.static_dir ()) ["js"; "h42n42.js"]) ]
                     (cdata "")
-                ])
-             (body [h1 [txt "Welcome to h42n42 beeligul!"]; div ~a:[ a_id "creet" ] [] ])
+                ; script
+                     ~a:[ a_src (make_uri ~service:(Eliom_service.static_dir ()) ["js"; "movement.js"]) ]
+                    (cdata "")
+              ]
+             )
          )
      )
    

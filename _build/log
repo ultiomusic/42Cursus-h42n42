@@ -1,4 +1,4 @@
-# dune build @install @h42n42
+# dune exec -- ./h42n42_main.exe
 # OCAMLPARAM: unset
 # Shared cache: enabled-except-user-rules
 # Shared cache location: /home/beeligul/.cache/dune/db
@@ -13,5 +13,4 @@
 #  ; build_dir = In_build_dir "default"
 #  ; instrument_with = []
 #  }
-$ /home/beeligul/.opam/h42n42/bin/ocamlc.opt -config > /tmp/dune_bf010d_output
-$ /home/beeligul/.opam/h42n42/bin/js_of_ocaml --version > /tmp/dune_2761ec_output
+$ /home/beeligul/.opam/h42n42/bin/ocamlc.opt -config > /tmp/dune_53756e_output

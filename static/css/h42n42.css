@@ -9,5 +9,29 @@
     background: red;
     top: 0;
     left: 0;
+}
+
+#creet {
+    cursor: pointer;
+}
+
+.creet {
+    cursor: pointer;
   }
+
+  #hospital {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 120px;
+    height: 120px;
+    border: 3px dashed green;
+    background: rgba(0, 255, 0, 0.1);
+    pointer-events: none; /* üstüne tıklaması creet’leri etkilemesin */
+    z-index: 0;
+}
+
+.creet {
+    z-index: 1; /* creet’ler hastanenin üstünde olsun */
+}
   
