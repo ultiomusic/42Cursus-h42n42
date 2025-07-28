@@ -33,10 +33,13 @@
                     ~uri:(make_uri ~service:(Eliom_service.static_dir ()) ["css"; "h42n42.css"])
                     ()
                 ; script
+                  ~a:[ a_src (make_uri ~service:(Eliom_service.static_dir ()) ["js"; "movement.js"]) ]
+                  (cdata "")
+                ; script
                     ~a:[ a_src (make_uri ~service:(Eliom_service.static_dir ()) ["js"; "h42n42.js"]) ]
                     (cdata "")
                 ])
-             (body [h1 [txt "Welcome to h42n42 beeligul!"]])
+             (body [h1 [txt "Welcome to h42n42 beeligul!"]; div ~a:[ a_id "creet" ] [] ])
          )
      )
    
