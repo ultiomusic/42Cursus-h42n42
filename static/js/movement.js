@@ -51,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
         offsetY: 0
       };
   
-      // Tıklayınca enfekte et, skipNextClick kontrolüyle
+      // Click ile enfekte et, skipNextClick kontrolüyle
       el.addEventListener("click", e => {
         e.stopPropagation();
         if (c.skipNextClick) {
@@ -96,13 +96,14 @@ document.addEventListener("DOMContentLoaded", () => {
     // Global mouseup ile bırakma ve iyileştirme
     document.addEventListener("mouseup", e => {
       const rect = hospital.getBoundingClientRect();
+  
       creets.forEach(c => {
         if (c.isDragging) {
           c.isDragging = false;
           c.x = c.el.offsetLeft;
           c.y = c.el.offsetTop;
   
-          // Creet merkezini hesapla
+          // Creet’in merkezi
           const cx = c.x + c.el.offsetWidth  / 2;
           const cy = c.y + c.el.offsetHeight / 2;
   
@@ -113,7 +114,7 @@ document.addEventListener("DOMContentLoaded", () => {
             cy >= rect.top  && cy <= rect.bottom
           ) {
             c.isInfected = false;
-            el.style.backgroundColor = "red";
+            c.el.style.backgroundColor = "red";
             c.vx = c.baseVx;
             c.vy = c.baseVy;
             c.skipNextClick = true;
@@ -123,18 +124,29 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   
-    // Üreme mekanizması: her interval’de sağlıklı Creet’ler çoğalsın
+    // Üreme mekanizması: sağlıklıların %10'u kadar kopya üret
     setInterval(() => {
-      // Sağlıklı olanları filtrele
       const healthy = creets.filter(c => !c.isInfected);
-      healthy.forEach(parent => {
-        // Yeni bir Creet parent’ın konumunda doğsun
-        const baby = createCreet(parent.x, parent.y);
-        console.log("🐣 yeni Creet doğdu!");
+      const count = Math.floor(healthy.length * 0.1);
+      if (count <= 0) return;
+  
+      // Sağlıklılar arasından benzersiz seçilim için basit shuffle
+      const indices = healthy.map((_, idx) => idx);
+      for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+      }
+      const selected = indices.slice(0, count);
+  
+      selected.forEach(idx => {
+        const parent = healthy[idx];
+        createCreet(parent.x, parent.y);
       });
+  
+      console.log(`🐣 ${count} yeni Creet doğdu!`);
     }, reproductionInterval);
   
-    // Ana döngü: hareket ve bulaş
+    // Ana döngü: hareket + bulaş
     function loop() {
       // Hareket
       creets.forEach(c => {
