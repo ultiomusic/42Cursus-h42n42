@@ -128,7 +128,3 @@
   tools/check_modules.ml)
  (action
   (run ocaml -I +unix -I +str tools/check_modules.ml h42n42)))
-
-(alias
- (name client)
- (deps client/h42n42.bc.js))
