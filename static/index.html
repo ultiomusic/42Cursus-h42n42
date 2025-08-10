@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>h42n42</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="/css/h42n42.css" rel="stylesheet" />
+  </head>
+  <body>
+    <!-- Oyun alanı -->
+    <div id="sim" class="sim"></div>
+
+    <!-- Üst bilgi (HUD) -->
+    <div id="hud" class="hud">
+      <span>Time: </span><span id="stat-time" class="hud__val">00:00</span>
+      <span>  Alive: </span><span id="stat-alive" class="hud__val">0</span>
+      <span>  Healthy: </span><span id="stat-healthy" class="hud__val">0</span>
+      <span>  Infected: </span><span id="stat-infected" class="hud__val">0</span>
+      <span>  Dead: </span><span id="stat-dead" class="hud__val">0</span>
+    </div>
+
+    <!-- Bantlar -->
+    <div id="river" class="band band--river"></div>
+    <div id="hospital" class="band band--hospital"></div>
+
+    <!-- Kontroller -->
+    <button id="btn-pause" class="btn btn--pause" title="Pause/Resume">Pause</button>
+    <button id="btn-menu"  class="btn btn--menu"  title="Settings">☰</button>
+
+    <!-- Ayar paneli (içi JS ile doldurulacak) -->
+    <div id="settings-panel" class="settings is-hidden"></div>
+
+    <!-- Başlangıç ekranı -->
+    <div id="play-overlay" class="overlay overlay--play">
+      <button id="btn-play" class="btn btn--play">Play</button>
+    </div>
+
+    <!-- Game Over paneli JS ile eklenecek -->
+
+    <!-- Uygulama kodu -->
+    <script src="/h42n42.js"></script>
+  </body>
+</html>
