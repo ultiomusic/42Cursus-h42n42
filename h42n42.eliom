@@ -2,7 +2,7 @@
    Feel free to use it, modify it, and redistribute it as you wish. *)
 
    [%%shared
-   [@@@ocaml.warning "-34-37-69"]
+   [@@@ocaml.warning "-27-34-37-69"]
    ]
    
    let%server application_name = "h42n42"
@@ -27,80 +27,278 @@
    
    [%%shared
    type state = Healthy | Infected | Dead
+   type kind  = Normal  | Mean     | Berserk
    ]
    
-   (* ─────────────────────────────────────────────────────────────────────────── *)
-   (* Config *)
+   module%client Const = struct
+     let base_size     = 40.0
+     let mean_scale    = 0.85
+     let berserk_max   = 4.0
+     let infection_life= 15.0
+     let col_healthy   = "#4cff4c"
+     let col_infected  = "#ff6243"
+     let col_mean      = "#ffd400"
+     let col_berserk   = "#ff33ff"
+   end
+   
+   module%client Params = struct
+     let infection_prob  = ref 0.02
+     let jitter_prob     = ref 0.02
+     let turn_min_s      = ref 2.0
+     let turn_max_s      = ref 5.0
+     let reproduce_min   = ref 12.0
+     let reproduce_max   = ref 22.0
+     let max_creets      = ref 40
+     let river_h         = ref 60.0
+     let hospital_h      = ref 80.0
+     let difficulty_step = ref 0.01
+     let initial_creets  = ref 14
+     let slow_on_infect  = 0.85
+   end
+   
+   module%client Difficulty = struct
+     let base = ref 1.0
+     let running = ref false
+     let start () =
+       if not !running then (
+         running := true;
+         Lwt.async (fun () ->
+           let rec loop () =
+             let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.5 in
+             base := min 3.0 (!base +. !(Params.difficulty_step));
+             loop ()
+           in
+           loop ()
+         )
+       )
+   end
+   
    module%client Config = struct
-     let speed  = ref 1.0
-     let radius = ref 22.0
      let paused = ref false
    end
    
    module%client Runtime = struct
+     let game_over   = ref false
+     let game_started= ref false
      let rec wait_unpaused () =
-       if !(Config.paused) then
+       if !(Config.paused) || !game_over || not !game_started then (
          let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.05 in
          wait_unpaused ()
-       else Lwt.return_unit
+       ) else Lwt.return_unit
+   end
+   
+   (* Yeni: epoch sistemi — replay’de eski döngüleri sonlandırmak için *)
+   module%client Session = struct
+     let epoch = ref 0
+   end
+   
+   (* Oyun dışından tetiklenecek callback’ler için *)
+   module%client Callbacks = struct
+     let on_replay : (unit -> unit) ref = ref (fun () -> ())
    end
    
    (* ─────────────────────────────────────────────────────────────────────────── *)
-   (* Creet *)
    module%client Creet = struct
      open Js_of_ocaml
+     module C = Const
    
      type t = {
        id       : int;
+       epoch    : int;   (* yeni alan: hangi oyunda üretildi *)
        mutable x: float;
        mutable y: float;
        mutable vx: float;
        mutable vy: float;
        mutable state: state;
+       mutable kind: kind;
+       mutable size_scale: float;
+       mutable life_left: float option;
+       mutable grabbed: bool;
+       mutable next_turn: float;
        elt      : Dom_html.divElement Js.t;
      }
    
-     let make_dom ~id ~x ~y =
+     let size (c:t) = C.base_size *. c.size_scale
+     let radius (c:t) = (size c) /. 2.0
+     let center (c:t) = (c.x +. radius c, c.y +. radius c)
+   
+     let color_for (c:t) =
+       match c.state, c.kind with
+       | Healthy, _          -> C.col_healthy
+       | Infected, Berserk   -> C.col_berserk
+       | Infected, Mean      -> C.col_mean
+       | Infected, Normal    -> C.col_infected
+       | Dead, _             -> "#808080"
+   
+     let apply_visual (c:t) =
+       let sz = size c |> int_of_float in
+       c.elt##.style##.width  := Js.string (Printf.sprintf "%dpx" sz);
+       c.elt##.style##.height := Js.string (Printf.sprintf "%dpx" sz);
+       c.elt##.style##.left   := Js.string (Printf.sprintf "%dpx" (int_of_float c.x));
+       c.elt##.style##.top    := Js.string (Printf.sprintf "%dpx" (int_of_float c.y));
+       c.elt##.style##.background := Js.string (color_for c);
+       c.elt##.style##.borderRadius := Js.string "50%";
+       let border =
+         match c.kind with
+         | Berserk -> "2px solid #fff"
+         | Mean    -> "2px solid #ff0"
+         | Normal  -> "none"
+       in
+       c.elt##.style##.border := Js.string border;
+       ignore ((c.elt##.style)##setProperty (Js.string "box-shadow")
+                  (Js.string (match c.kind with
+                              | Berserk -> "0 0 8px 2px rgba(255,255,255,0.6)"
+                              | _       -> "none"))
+                  Js.Optdef.empty)
+   
+     let make_dom ~id ~x:_ ~y:_ =
        let elt =
          Js_of_ocaml_tyxml.Tyxml_js.Html.(
            div
              ~a:[
                a_class ["creet"];
                a_id (Printf.sprintf "creet-%d" id);
-               a_style (Printf.sprintf
-                          "position:absolute;width:20px;height:20px;\
-                           background:lime;border-radius:50%%;\
-                           left:%dpx;top:%dpx"
-                          (int_of_float x) (int_of_float y));
-             ]
-             []
+               a_style "position:absolute;left:0;top:0"
+             ] []
          )
        in
        Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_div elt
    
-     let rand_vel () =
-       let speed = 1.2 in
+     let rand_vel ?(speed=1.2) () =
        let angle = 6.283185307179586 *. Random.float 1.0 in
        (speed *. cos angle, speed *. sin angle)
    
-     let create ~id ~x ~y =
+     let create ~id ~x ~y () =
        let elt = make_dom ~id ~x ~y in
        let sim = Dom_html.getElementById "sim" in
        sim##appendChild (elt :> Dom.node Js.t) |> ignore;
        let vx, vy = rand_vel () in
-       { id; x; y; vx; vy; state = Healthy; elt }
+       let c = {
+         id; epoch = !Session.epoch;
+         x; y; vx; vy;
+         state = Healthy; kind = Normal;
+         size_scale = 1.0; life_left=None; grabbed=false;
+         next_turn = !(Params.turn_min_s) +. Random.float (!(Params.turn_max_s) -. !(Params.turn_min_s));
+         elt
+       } in
+       apply_visual c;
+       c
+   
+     let set_size_scale (c:t) (s:float) =
+       let old_r = radius c in
+       c.size_scale <- s;
+       let new_r = radius c in
+       c.x <- c.x -. (new_r -. old_r);
+       c.y <- c.y -. (new_r -. old_r);
+       apply_visual c
+   
+     let heal (c:t) =
+       if c.state = Infected then (
+         c.state <- Healthy;
+         c.kind <- Normal;
+         c.life_left <- None;
+         set_size_scale c 1.0;
+         c.vx <- c.vx /. Params.slow_on_infect;
+         c.vy <- c.vy /. Params.slow_on_infect;
+         apply_visual c
+       )
+   
+     let to_berserk (c:t) =
+       c.kind <- Berserk;
+       c.life_left <- Some Const.infection_life;
+       apply_visual c
+   
+     let to_mean (c:t) =
+       c.kind <- Mean;
+       set_size_scale c Const.mean_scale;
+       apply_visual c
+   
+     let infect (c:t) =
+       if c.state = Healthy && not c.grabbed then (
+         c.state <- Infected;
+         c.life_left <- Some Const.infection_life;
+         c.vx <- c.vx *. Params.slow_on_infect;
+         c.vy <- c.vy *. Params.slow_on_infect;
+         let r = Random.float 1.0 in
+         if r < 0.10 then to_berserk c
+         else if r < 0.20 then to_mean c;
+         apply_visual c
+       )
    end
    
-   (* Dünya *)
    module%client World = struct
      let creets : Creet.t list ref = ref []
      let add (c : Creet.t) = creets := c :: !creets
      let remove (c : Creet.t) = creets := List.filter (fun x -> x != c) !creets
      let all () = !creets
      let count () = List.length !creets
+     let count_healthy () =
+       List.fold_left (fun acc (c:Creet.t) -> if c.state = Healthy then acc + 1 else acc) 0 !creets
+     let any_healthy () = count_healthy () > 0
    end
    
-   (* İstatistik HUD *)
+   module%client Ids = struct
+     let counter = ref 1000
+     let next () = incr counter; !counter
+   end
+   
+   module%client Timer = struct
+     open Js_of_ocaml
+     let start_ms       : float option ref = ref None
+     let paused_acc_ms  = ref 0.0
+     let pause_start_ms : float option ref = ref None
+     let running        = ref false
+   
+     let now_ms () = (new%js Js.date_now)##getTime
+   
+     let format (secs:int) =
+       let m = secs / 60 and s = secs mod 60 in
+       Printf.sprintf "%02d:%02d" m s
+   
+     let elapsed_ms () =
+       match !start_ms with
+       | None -> 0.0
+       | Some s ->
+           let base = now_ms () -. s -. !paused_acc_ms in
+           match !pause_start_ms with
+           | None   -> base
+           | Some p -> base -. (now_ms () -. p)
+   
+     let elapsed_string () =
+       let secs = max 0 (int_of_float (elapsed_ms () /. 1000.)) in
+       format secs
+   
+     let start () =
+       start_ms := Some (now_ms ());
+       paused_acc_ms := 0.0;
+       pause_start_ms := None;
+       running := true;
+       Lwt.async (fun () ->
+         let rec loop () =
+           if !running && not !(Runtime.game_over) then (
+             (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "stat-time")) with
+              | Some el -> el##.textContent := Js.Opt.return (Js.string (elapsed_string ()))
+              | None -> ());
+             let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.25 in
+             loop ()
+           ) else Lwt.return_unit
+         in
+         loop ()
+       )
+   
+     let pause () =
+       match !pause_start_ms with
+       | Some _ -> ()
+       | None -> pause_start_ms := Some (now_ms ())
+   
+     let resume () =
+       match !pause_start_ms with
+       | None -> ()
+       | Some p ->
+           paused_acc_ms := !paused_acc_ms +. (now_ms () -. p);
+           pause_start_ms := None
+   end
+   
    module%client Stats = struct
      open Js_of_ocaml
      let dead_total = ref 0
@@ -111,7 +309,10 @@
        | None ->
            let open Js_of_ocaml_tyxml.Tyxml_js in
            let s id =
-             Html.span ~a:[Html.a_id id; Html.a_style "min-width:40px;display:inline-block"] [Html.txt "0"]
+             Html.span ~a:[Html.a_id id; Html.a_style "min-width:46px;display:inline-block;text-align:right"] [Html.txt "00:00"]
+           in
+           let n id =
+             Html.span ~a:[Html.a_id id; Html.a_style "min-width:28px;display:inline-block;text-align:right"] [Html.txt "0"]
            in
            let overlay =
              Html.div
@@ -123,10 +324,11 @@
                                color:#fff;user-select:none"
                ]
                [
-                 Html.span [Html.txt "Alive: "]; s "stat-alive";   Html.txt "  ";
-                 Html.span [Html.txt "Healthy: "]; s "stat-healthy"; Html.txt "  ";
-                 Html.span [Html.txt "Infected: "]; s "stat-infected"; Html.txt "  ";
-                 Html.span [Html.txt "Dead: "]; s "stat-dead";
+                 Html.span [Html.txt "Time: "]; s "stat-time";  Html.txt "  ";
+                 Html.span [Html.txt "Alive: "]; n "stat-alive";   Html.txt "  ";
+                 Html.span [Html.txt "Healthy: "]; n "stat-healthy"; Html.txt "  ";
+                 Html.span [Html.txt "Infected: "]; n "stat-infected"; Html.txt "  ";
+                 Html.span [Html.txt "Dead: "]; n "stat-dead";
                ]
            in
            let dom = To_dom.of_div overlay in
@@ -156,262 +358,783 @@
        set_text "stat-dead" (string_of_int !dead_total)
    
      let on_death () = incr dead_total; refresh ()
+   
+     let show_game_over () =
+       if not !(Runtime.game_over) then (
+         Runtime.game_over := true;
+         let open Js_of_ocaml_tyxml.Tyxml_js in
+         let time_txt = Timer.elapsed_string () in
+         let panel =
+           Html.div
+             ~a:[ Html.a_id "gameover"
+                ; Html.a_style "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;\
+                                background:rgba(0,0,0,0.65);z-index:10010" ]
+             [ Html.div
+                 ~a:[ Html.a_style "color:#fff;text-align:center" ]
+                 [ Html.div
+                     ~a:[ Html.a_style "font:700 48px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;\
+                                          text-shadow:0 2px 6px rgba(0,0,0,.6);margin-bottom:10px" ]
+                     [ Html.txt "GAME OVER" ];
+                   Html.div
+                     ~a:[ Html.a_style "font:600 22px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;\
+                                          margin-bottom:14px" ]
+                     [ Html.txt ("Time: " ^ time_txt) ];
+                   Html.button
+                     ~a:[ Html.a_id "btn-replay"
+                        ; Html.a_style "padding:12px 22px;border-radius:10px;font:700 18px/1.2 -apple-system,Segoe UI,Roboto;\
+                                        background:#00c2ff;color:#013;border:0;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.25)" ]
+                     [ Html.txt "Replay" ]
+                 ] ]
+         in
+         let dom = To_dom.of_div panel in
+         let body = Js_of_ocaml.Dom_html.document##.body in
+         Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+         (* Replay tıklaması: dışarıdaki callback’e delege *)
+         let btn = Js_of_ocaml.Dom_html.getElementById "btn-replay" in
+         let open Js_of_ocaml_lwt in
+         Lwt.async (fun () ->
+           Lwt_js_events.clicks btn (fun _ _ -> (!Callbacks.on_replay) (); Lwt.return_unit))
+       )
    end
    
-   (* Hastalık *)
-   module%client Disease = struct
-     open Js_of_ocaml
+   module%client Infection = struct
+     let contact (a:Creet.t) (b:Creet.t) =
+       let ax, ay = Creet.center a and bx, by = Creet.center b in
+       let dx = ax -. bx and dy = ay -. by in
+       let rr = (Creet.radius a +. Creet.radius b) in
+       (dx *. dx +. dy *. dy) <= rr *. rr
    
-     let set_color (c : Creet.t) =
-       let color = match c.state with
-         | Healthy  -> "lime"
-         | Infected -> "red"
-         | Dead     -> "gray"
-       in
-       c.elt##.style##.background := Js.string color
-   
-     let set_state (c : Creet.t) (s : state) =
-       if c.state <> s then begin
-         c.state <- s;
-         (match s with
-          | Healthy  ->
-              set_color c; Stats.refresh ()
-          | Infected ->
-              c.vx <- c.vx *. 0.75; c.vy <- c.vy *. 0.75;
-              set_color c; Stats.refresh ()
-          | Dead ->
-              c.vx <- 0.; c.vy <- 0.;
-              c.elt##.style##.display := Js.string "none";
-              World.remove c;
-              Stats.on_death ());
-       end
-   
-     let distance (a : Creet.t) (b : Creet.t) =
-       let dx = a.x -. b.x and dy = a.y -. b.y in
-       sqrt (dx *. dx +. dy *. dy)
-   
-     let start_death_timer (c : Creet.t) =
-       Lwt.async (fun () ->
-         let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 10.0 in
-         if c.state = Infected then set_state c Dead;
-         Lwt.return_unit)
-   
-     let try_infect_pair (a : Creet.t) (b : Creet.t) =
-       if distance a b < !(Config.radius) then
+     let tick_pair (a:Creet.t) (b:Creet.t) =
+       if a.grabbed || b.grabbed then ()
+       else
          match a.state, b.state with
-         | Infected, Healthy -> set_state b Infected; start_death_timer b
-         | Healthy, Infected -> set_state a Infected; start_death_timer a
+         | Infected, Healthy ->
+             if contact a b && Random.float 1.0 < !(Params.infection_prob)
+             then Creet.infect b
+         | Healthy, Infected ->
+             if contact a b && Random.float 1.0 < !(Params.infection_prob)
+             then Creet.infect a
          | _ -> ()
-   
-     let check_transmission (self : Creet.t) =
-       World.all () |> List.iter (fun other ->
-         if other != self then try_infect_pair self other)
    end
    
-   (* Hareket *)
+   module%client Behavior = struct
+     let mean_speed_boost = 1.15 /. Params.slow_on_infect
+   
+     let speed_mult (c : Creet.t) =
+       match c.kind, c.state with
+       | Mean,    Infected -> mean_speed_boost
+       | Berserk, Infected -> 1.0
+       | _ -> 1.0
+   
+     let is_alive (c : Creet.t) = c.state <> Dead
+   
+     let nearest ?(pred=(fun (_:Creet.t)->true)) (self : Creet.t) : Creet.t option =
+       let sx, sy = Creet.center self in
+       let best : (Creet.t * float) option ref = ref None in
+       World.all ()
+       |> List.iter (fun o ->
+            if o != self && is_alive o && pred o then (
+              let ox, oy = Creet.center o in
+              let dx = sx -. ox and dy = sy -. oy in
+              let d2 = dx*.dx +. dy*.dy in
+              match !best with
+              | None -> best := Some (o, d2)
+              | Some (_, bd2) -> if d2 < bd2 then best := Some (o, d2)
+            )
+          );
+       match !best with Some (o, _) -> Some o | None -> None
+   
+     let nudge_towards (c : Creet.t) (tx,ty) strength =
+       let cx,cy = Creet.center c in
+       let dx = tx -. cx and dy = ty -. cy in
+       let d  = max 0.001 (sqrt (dx *. dx +. dy *. dy)) in
+       let ux, uy = dx /. d, dy /. d in
+       let cur_speed = sqrt (c.vx *. c.vx +. c.vy *. c.vy) in
+       let desired = max 0.6 cur_speed in
+       let nx = (1. -. strength) *. c.vx +. strength *. ux *. desired in
+       let ny = (1. -. strength) *. c.vy +. strength *. uy *. desired in
+       c.vx <- nx; c.vy <- ny
+   
+     let update (c : Creet.t) =
+       match c.state, c.kind with
+       | Infected, Mean ->
+           if Random.float 1.0 < 0.30 then (
+             match nearest c ~pred:(fun o -> o.state = Healthy) with
+             | Some t -> nudge_towards c (Creet.center t) 0.12
+             | None -> ()
+           )
+       | Infected, Berserk -> ()
+       | _ -> ()
+   end
+   
    module%client Movement = struct
      open Js_of_ocaml
-   
-     let size = 20.0
    
      let bounds () =
        let w = float_of_int Dom_html.window##.innerWidth
        and h = float_of_int Dom_html.window##.innerHeight in
-       (w -. size, h -. size)
+       (w, h)
    
-     let bounce pos vel maxv =
-       if pos < 0. then (0., -.vel)
-       else if pos > maxv then (maxv, -.vel)
-       else (pos, vel)
+     let bounce (c:Creet.t) =
+       let w, h = bounds () in
+       let sz = Creet.size c in
+       if c.x < 0. then (c.x <- 0.; c.vx <- -. c.vx)
+       else if c.x +. sz > w then (c.x <- w -. sz; c.vx <- -. c.vx);
+       if c.y < 0. then (c.y <- 0.; c.vy <- -. c.vy)
+       else if c.y +. sz > h then (c.y <- h -. sz; c.vy <- -. c.vy)
    
-     let jitter (c : Creet.t) =
-       if Random.float 1.0 < 0.02 then begin
-         let a = (Random.float 0.6 -. 0.3) in
-         let cos_a = cos a and sin_a = sin a in
-         let vx' = c.vx *. cos_a -. c.vy *. sin_a in
-         let vy' = c.vx *. sin_a +. c.vy *. cos_a in
+     let in_river (c:Creet.t) = c.y <= !(Params.river_h)
+     let in_hospital (c:Creet.t) =
+       let _, h = bounds () in
+       (c.y +. Creet.size c) >= (h -. !(Params.hospital_h))
+   
+     let turn_tick (c:Creet.t) dt =
+       c.next_turn <- c.next_turn -. dt;
+       if c.next_turn <= 0. then (
+         let ang = (Random.float 0.8 -. 0.4) in
+         let ca = cos ang and sa = sin ang in
+         let vx' = c.vx *. ca -. c.vy *. sa
+         and vy' = c.vx *. sa +. c.vy *. ca in
          c.vx <- vx'; c.vy <- vy';
-       end
-   
-     let rec loop (c : Creet.t) =
-       if c.state = Dead then Lwt.return_unit
-       else begin
-         let%lwt () = Runtime.wait_unpaused () in
-         let w, h = bounds () in
-         let spd = !(Config.speed) in
-         c.x <- c.x +. (c.vx *. spd);
-         c.y <- c.y +. (c.vy *. spd);
-         let x', vx' = bounce c.x c.vx w in
-         let y', vy' = bounce c.y c.vy h in
-         c.x <- x'; c.vx <- vx';
-         c.y <- y'; c.vy <- vy';
-         c.elt##.style##.left := Js.string (Printf.sprintf "%dpx" (int_of_float c.x));
-         c.elt##.style##.top  := Js.string (Printf.sprintf "%dpx" (int_of_float c.y));
-         Disease.check_transmission c;
-         jitter c;
-         let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.016 in
-         loop c
-       end
-   
-     let start (c : Creet.t) = Lwt.async (fun () -> loop c)
-   end
-   
-   (* Kopyalanma *)
-   module%client Reproduction = struct
-     open Js_of_ocaml
-   
-     let max_population = 120
-     let min_interval_s = 12.0
-     let max_interval_s = 22.0
-     let size = 20.0
-   
-     let rand_interval () =
-       min_interval_s +. Random.float (max_interval_s -. min_interval_s)
+         c.next_turn <- !(Params.turn_min_s) +. Random.float (!(Params.turn_max_s) -. !(Params.turn_min_s))
+       );
+       if Random.float 1.0 < !(Params.jitter_prob) then (
+         let a = (Random.float 0.6 -. 0.3) in
+         let ca = cos a and sa = sin a in
+         let vx' = c.vx *. ca -. c.vy *. sa
+         and vy' = c.vx *. sa +. c.vy *. ca in
+         c.vx <- vx'; c.vy <- vy'
+       )
    
      let clamp x lo hi = max lo (min hi x)
+     let rand_repro_delay () =
+       !(Params.reproduce_min) +. Random.float (!(Params.reproduce_max) -. !(Params.reproduce_min))
    
-     module Ids = struct
-       let counter = ref 1000
-       let next () = incr counter; !counter
-     end
+     let rec reproduction_loop (parent : Creet.t) : unit Lwt.t =
+       (* epoch kontrolü: eski oyunun döngüsünü bitir *)
+       if parent.epoch <> !Session.epoch then Lwt.return_unit
+       else if parent.state <> Healthy then Lwt.return_unit
+       else if not (World.any_healthy ()) then Lwt.return_unit
+       else (
+         let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep (rand_repro_delay ()) in
+         if parent.epoch = !Session.epoch
+            && parent.state = Healthy
+            && World.any_healthy ()
+            && World.count () < !(Params.max_creets) then (
+           let w = float_of_int Dom_html.window##.innerWidth
+           and h = float_of_int Dom_html.window##.innerHeight in
+           let dx = (Random.float 30.) -. 15. in
+           let dy = (Random.float 30.) -. 15. in
+           let sz = Creet.size parent in
+           let x = clamp (parent.x +. dx) 0. (w -. sz)
+           and y = clamp (parent.y +. dy) 0. (h -. sz) in
+           let id = Ids.next () in
+           let child = Creet.create ~id ~x ~y () in
+           World.add child;
+           start child;
+           start_reproduction child;
+           Stats.refresh ();
+         );
+         reproduction_loop parent
+       )
    
-     let rec spawn_child (parent : Creet.t) =
-       let w = float_of_int Dom_html.window##.innerWidth in
-       let h = float_of_int Dom_html.window##.innerHeight in
-       let dx = (Random.float 30.) -. 15. in
-       let dy = (Random.float 30.) -. 15. in
-       let x = clamp (parent.x +. dx) 0. (w -. size) in
-       let y = clamp (parent.y +. dy) 0. (h -. size) in
-       let id = Ids.next () in
-       let c = Creet.create ~id ~x ~y in
-       World.add c; Movement.start c; start c;
-       Stats.refresh ();
-       c
+     and start_reproduction (c : Creet.t) = Lwt.async (fun () -> reproduction_loop c)
    
-     and loop (c : Creet.t) =
-       if c.state = Dead then Lwt.return_unit
-       else if World.count () >= max_population then
-         let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 2.0 in
-         loop c
-       else if c.state = Healthy then begin
+     and loop (c : Creet.t) : unit Lwt.t =
+       (* epoch kontrolü: replay sonrası eski creet’in döngüsünü bitir *)
+       if c.epoch <> !Session.epoch then Lwt.return_unit
+       else if c.state = Dead then Lwt.return_unit
+       else (
          let%lwt () = Runtime.wait_unpaused () in
-         let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep (rand_interval ()) in
-         if c.state = Healthy && World.count () < max_population then
-           ignore (spawn_child c);
-         loop c
-       end else
-         let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 3.0 in
-         loop c
+         let spd_scale = !(Difficulty.base) *. Behavior.speed_mult c in
    
-     and start (c : Creet.t) =
-       Lwt.async (fun () -> loop c)
+         (match c.life_left, c.state with
+          | Some t, Infected ->
+              let t' = t -. 0.016 in
+              c.life_left <- Some t';
+              (match c.kind with
+               | Berserk ->
+                   let progress = max 0.0 (min 1.0 ((Const.infection_life -. t') /. Const.infection_life)) in
+                   let scale = 1.0 +. (Const.berserk_max -. 1.0) *. progress in
+                   Creet.set_size_scale c scale
+               | _ -> ());
+              if t' <= 0.0 then (
+                c.state <- Dead;
+                c.vx <- 0.; c.vy <- 0.;
+                c.elt##.style##.display := Js.string "none";
+                World.remove c;
+                Stats.on_death ();
+              )
+          | _ -> ());
+   
+         Behavior.update c;
+   
+         if not c.grabbed then (
+           turn_tick c 0.016;
+           c.x <- c.x +. (c.vx *. spd_scale);
+           c.y <- c.y +. (c.vy *. spd_scale);
+           bounce c;
+           if c.state = Healthy && in_river c then Creet.infect c
+         );
+   
+         Creet.apply_visual c;
+   
+         if (World.count () = 0) || (World.count_healthy () = 0) then (
+           Stats.refresh (); Stats.show_game_over (); Lwt.return_unit
+         ) else (
+           let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.016 in
+           loop c
+         )
+       )
+   
+     and start (c : Creet.t) = Lwt.async (fun () -> loop c)
    end
    
-   (* Kontrol paneli *)
-   module%client Controls = struct
+   (* ─────────────────────────────────────────────────────────────────────────── *)
+   module%client Quad = struct
+     type rect = { x: float; y: float; w: float; h: float }
+   
+     let contains_point (r:rect) (px,py) =
+       px >= r.x && px <= r.x +. r.w && py >= r.y && py <= r.y +. r.h
+   
+     let intersects (a:rect) (b:rect) =
+       not (b.x > a.x +. a.w || b.x +. b.w < a.x || b.y > a.y +. a.h || b.y +. b.h < a.y)
+   
+     type node = {
+       bounds   : rect;
+       capacity : int;
+       mutable points : Creet.t list;
+       mutable nw : node option;
+       mutable ne : node option;
+       mutable sw : node option;
+       mutable se : node option;
+       mutable divided : bool;
+     }
+   
+     let create bounds capacity =
+       { bounds; capacity; points=[]; nw=None; ne=None; sw=None; se=None; divided=false }
+   
+     let subdivide n =
+       let hw = n.bounds.w /. 2. and hh = n.bounds.h /. 2. in
+       let x = n.bounds.x and y = n.bounds.y in
+       let mk x y = create { x; y; w = hw; h = hh } n.capacity in
+       n.nw <- Some (mk x y);
+       n.ne <- Some (mk (x +. hw) y);
+       n.sw <- Some (mk x (y +. hh));
+       n.se <- Some (mk (x +. hw) (y +. hh));
+       n.divided <- true
+   
+     let rec insert n (c:Creet.t) =
+       let px, py = Creet.center c in
+       if not (contains_point n.bounds (px,py)) then false
+       else if (List.length n.points) < n.capacity && not n.divided then (
+         n.points <- c :: n.points; true
+       ) else (
+         if not n.divided then subdivide n;
+         let inserted =
+           (match n.nw with Some q when insert q c -> true | _ -> false)
+           || (match n.ne with Some q when insert q c -> true | _ -> false)
+           || (match n.sw with Some q when insert q c -> true | _ -> false)
+           || (match n.se with Some q when insert q c -> true | _ -> false)
+         in
+         if not inserted then n.points <- c :: n.points;
+         true
+       )
+   
+     let rec query n (range:rect) (acc:Creet.t list ref) =
+       if not (intersects n.bounds range) then ()
+       else (
+         List.iter (fun (c:Creet.t) ->
+           let px,py = Creet.center c in
+           if contains_point range (px,py) then acc := c :: !acc) n.points;
+         if n.divided then (
+           (match n.nw with Some q -> query q range acc | None -> ());
+           (match n.ne with Some q -> query q range acc | None -> ());
+           (match n.sw with Some q -> query q range acc | None -> ());
+           (match n.se with Some q -> query q range acc | None -> ())
+         )
+       )
+   end
+   
+   module%client Collider = struct
+     open Quad
+   
+     let max_other_radius = (Const.base_size *. Const.berserk_max) /. 2.0
+   
+     let build_tree () =
+       let w = float_of_int Js_of_ocaml.Dom_html.window##.innerWidth
+       and h = float_of_int Js_of_ocaml.Dom_html.window##.innerHeight in
+       let root = create { x=0.; y=0.; w; h } 8 in
+       World.all ()
+       |> List.iter (fun (c:Creet.t) -> if c.state <> Dead then ignore (insert root c));
+       root
+   
+     let process_pairs root =
+       World.all ()
+       |> List.iter (fun (c:Creet.t) ->
+            if c.state <> Dead then (
+              let cx, cy = Creet.center c in
+              let r = Creet.radius c +. max_other_radius in
+              let range = { x = cx -. r; y = cy -. r; w = 2. *. r; h = 2. *. r } in
+              let acc : Creet.t list ref = ref [] in
+              query root range acc;
+              List.iter (fun (o:Creet.t) ->
+                if o != c && o.id > c.id && o.state <> Dead then (
+                  Infection.tick_pair c o;
+                  Infection.tick_pair o c;
+                )
+              ) !acc
+            )
+          )
+   
+     let start () =
+       Lwt.async (fun () ->
+         let rec loop () =
+           if !(Runtime.game_over) || not !(Runtime.game_started) then Lwt.return_unit
+           else (
+             let%lwt () = Runtime.wait_unpaused () in
+             let root = build_tree () in
+             process_pairs root;
+             let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.016 in
+             loop ()
+           )
+         in
+         loop ()
+       )
+   end
+   
+   module%client Input = struct
      open Js_of_ocaml
    
-     let init () =
-       match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "controls")) with
-       | Some _ -> ()
+     type drag = {
+       mutable active: bool;
+       mutable target: Creet.t option;
+       mutable offx : float;
+       mutable offy : float;
+     }
+   
+     let d = { active=false; target=None; offx=0.; offy=0. }
+   
+     let element_pos (e:Dom_html.element Js.t) =
+       let r = e##getBoundingClientRect in
+       (r##.left, r##.top)
+   
+     let mouse_pos_in (e:Dom_html.element Js.t) (ev:Dom_html.mouseEvent Js.t) =
+       let ex, ey = element_pos e in
+       (float_of_int ev##.clientX -. ex, float_of_int ev##.clientY -. ey)
+   
+     let try_pick (x:float) (y:float) : Creet.t option =
+       let within (c:Creet.t) =
+         let cx, cy = Creet.center c in
+         let r = Creet.radius c in
+         let dx = x -. cx and dy = y -. cy in
+         (dx *. dx +. dy *. dy) <= r *. r
+       in
+       World.all () |> List.find_opt within
+   
+     let install () =
+       let sim_el = Js_of_ocaml.Dom_html.getElementById "sim" in
+       let open Js_of_ocaml_lwt in
+   
+       Lwt.async (fun () ->
+         Lwt_js_events.mousedowns (sim_el :> Dom_html.eventTarget Js.t) (fun ev _ ->
+           if not !(Runtime.game_over) && !(Runtime.game_started) then (
+             let x, y = mouse_pos_in sim_el ev in
+             match try_pick x y with
+             | None -> Lwt.return_unit
+             | Some c ->
+                 d.active <- true; d.target <- Some c; c.grabbed <- true;
+                 let cx, cy = Creet.center c in
+                 d.offx <- x -. cx; d.offy <- y -. cy;
+                 ignore ((c.elt##.style)##setProperty (Js.string "outline") (Js.string "2px solid #0ff") Js.Optdef.empty);
+                 Lwt.return_unit
+           ) else Lwt.return_unit));
+   
+       Lwt.async (fun () ->
+         Lwt_js_events.mousemoves Dom_html.document (fun ev _ ->
+           match d.target with
+           | Some c when d.active ->
+               let w = float_of_int Dom_html.window##.innerWidth
+               and h = float_of_int Dom_html.window##.innerHeight in
+               let x, y = float_of_int ev##.clientX, float_of_int ev##.clientY in
+               let nx = x -. d.offx -. Creet.radius c
+               and ny = y -. d.offy -. Creet.radius c in
+               let nx = max 0. (min (w -. Creet.size c) nx)
+               and ny = max 0. (min (h -. Creet.size c) ny) in
+               c.x <- nx; c.y <- ny;
+               Creet.apply_visual c;
+               Lwt.return_unit
+           | _ -> Lwt.return_unit));
+   
+       Lwt.async (fun () ->
+         Lwt_js_events.mouseups Dom_html.document (fun _ _ ->
+           match d.target with
+           | Some c ->
+               d.active <- false; d.target <- None; c.grabbed <- false;
+               ignore ((c.elt##.style)##setProperty (Js.string "outline") (Js.string "none") Js.Optdef.empty);
+               if c.state = Infected && Movement.in_hospital c
+               then Creet.heal c;
+               Lwt.return_unit
+           | None -> Lwt.return_unit));
+       ()
+   end
+   
+   module%client Overlay = struct
+     open Js_of_ocaml
+   
+     let set_band_heights () =
+       (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "river")) with
+        | Some d -> d##.style##.height := Js.string (Printf.sprintf "%dpx" (int_of_float !(Params.river_h)))
+        | None -> ());
+       (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "hospital")) with
+        | Some d -> d##.style##.height := Js.string (Printf.sprintf "%dpx" (int_of_float !(Params.hospital_h)))
+        | None -> ())
+   
+     let init_bands () =
+       let doc = Dom_html.document in
+       let sim = Dom_html.getElementById "sim" in
+       let mk id style =
+         let d = Dom_html.createDiv doc in
+         d##.id := Js.string id;
+         d##.style##.position := Js.string "absolute";
+         d##.style##.left := Js.string "0"; d##.style##.right := Js.string "0";
+         d##.style##.pointerEvents := Js.string "none";
+         (match id with
+          | "river"    -> d##.style##.top := Js.string "0";
+          | "hospital" -> d##.style##.bottom := Js.string "0";
+          | _ -> ());
+         d##.style##.background := Js.string style;
+         Dom.appendChild (sim :> Dom.node Js.t) (d :> Dom.node Js.t)
+       in
+       mk "river" "linear-gradient(180deg,#5ef 0%,#38a 100%)";
+       mk "hospital" "linear-gradient(180deg,#282,#0b0)";
+       set_band_heights ()
+   
+     let init_pause_button () =
+       let open Js_of_ocaml_tyxml.Tyxml_js in
+       let btn =
+         Html.button
+           ~a:[ Html.a_id "btn-pause"
+              ; Html.a_style "position:fixed;top:8px;right:56px;z-index:9999;cursor:pointer;\
+                              background:rgba(0,0,0,0.35);color:#fff;border:0;border-radius:8px;padding:6px 12px;\
+                              font:14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial" ]
+           [ Html.txt "Pause" ]
+       in
+       let dom = To_dom.of_button btn in
+       let body = Js_of_ocaml.Dom_html.document##.body in
+       Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let open Js_of_ocaml_lwt in
+       let update () =
+         dom##.textContent := Js.Opt.return (Js.string (if !(Config.paused) then "Resume" else "Pause"))
+       in
+       update ();
+       Lwt.async (fun () ->
+         Lwt_js_events.clicks dom (fun _ _ ->
+           if !(Runtime.game_started) then (
+             Config.paused := not !(Config.paused);
+             if !(Config.paused) then Timer.pause () else Timer.resume ();
+             update ()
+           );
+           Lwt.return_unit))
+   
+     let init_menu_button ~on_click =
+       let open Js_of_ocaml_tyxml.Tyxml_js in
+       let btn =
+         Html.button
+           ~a:[ Html.a_id "btn-menu"
+              ; Html.a_title "Settings"
+              ; Html.a_style "position:fixed;top:8px;right:8px;z-index:10001;cursor:pointer;\
+                              width:36px;height:36px;background:rgba(0,0,0,0.35);color:#fff;border:0;border-radius:8px;\
+                              display:flex;align-items:center;justify-content:center;font-size:20px" ]
+           [ Html.txt "☰" ]
+       in
+       let dom = To_dom.of_button btn in
+       let body = Js_of_ocaml.Dom_html.document##.body in
+       Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let open Js_of_ocaml_lwt in
+       Lwt.async (fun () -> Lwt_js_events.clicks dom (fun _ _ -> on_click (); Lwt.return_unit))
+   
+     let show_play_overlay ~on_play =
+       let open Js_of_ocaml_tyxml.Tyxml_js in
+       let overlay =
+         Html.div
+           ~a:[ Html.a_id "play-overlay"
+              ; Html.a_style "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;\
+                              background:rgba(0,0,0,0.25);backdrop-filter:blur(8px);" ]
+           [ Html.button
+               ~a:[ Html.a_id "btn-play"
+                  ; Html.a_style "padding:16px 28px;border-radius:12px;font:700 24px/1.2 -apple-system,Segoe UI,Roboto;\
+                                  background:#00d084;color:#083;cursor:pointer;border:0;box-shadow:0 8px 24px rgba(0,0,0,.25)" ]
+               [ Html.txt "Play" ] ]
+       in
+       let dom = To_dom.of_div overlay in
+       let body = Js_of_ocaml.Dom_html.document##.body in
+       Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let play_btn = Js_of_ocaml.Dom_html.getElementById "btn-play" in
+       let open Js_of_ocaml_lwt in
+       Lwt.async (fun () ->
+         Lwt_js_events.clicks play_btn (fun _ _ ->
+           (match Js.Opt.to_option (Js_of_ocaml.Dom_html.document##getElementById (Js.string "play-overlay")) with
+            | Some ov -> ov##.style##.display := Js.string "none"
+            | None -> ());
+           on_play (); Lwt.return_unit))
+   end
+   
+   module%client Settings = struct
+     open Js_of_ocaml
+     let panel_ref : Dom_html.divElement Js.t option ref = ref None
+   
+     let ensure_panel () : Dom_html.divElement Js.t =
+       match !panel_ref with
+       | Some d -> d
        | None ->
-           let open Js_of_ocaml_tyxml.Tyxml_js in
+           let d = Dom_html.createDiv Dom_html.document in
+           d##.id := Js.string "settings-panel";
+           d##.style##.position := Js.string "fixed";
+           d##.style##.top := Js.string "48px";
+           d##.style##.right := Js.string "8px";
+           d##.style##.width := Js.string "320px";
+           d##.style##.maxHeight := Js.string "70vh";
+           d##.style##.overflowY := Js.string "auto";
+           d##.style##.zIndex := Js.string "10002";
+           d##.style##.background := Js.string "rgba(0,0,0,0.75)";
+           d##.style##.color := Js.string "#fff";
+           d##.style##.borderRadius := Js.string "12px";
+           d##.style##.padding := Js.string "12px";
+           d##.style##.display := Js.string "none";
+           ignore ((d##.style)##setProperty (Js.string "backdrop-filter") (Js.string "blur(6px)") Js.Optdef.empty);
+           ignore ((d##.style)##setProperty (Js.string "-webkit-backdrop-filter") (Js.string "blur(6px)") Js.Optdef.empty);
+           Dom.appendChild (Dom_html.document##.body :> Dom.node Js.t) (d :> Dom.node Js.t);
+           panel_ref := Some d; d
    
-           let btn =
-             Html.button
-               ~a:[ Html.a_id "btn-pause"
-                  ; Html.a_style "margin-right:8px;padding:4px 10px;border-radius:6px;border:0;cursor:pointer" ]
-               [ Html.txt "Pause" ]
-           in
+     let add_row
+         (p:Dom_html.divElement Js.t)
+         (title:string)
+       : Dom_html.divElement Js.t * Dom_html.element Js.t * Dom_html.inputElement Js.t =
+       let doc = Dom_html.document in
+       let row = Dom_html.createDiv doc in
+       row##.style##.marginBottom := Js.string "10px";
+       let label = Dom_html.createSpan doc in
+       label##.textContent := Js.Opt.return (Js.string title);
+       label##.style##.display := Js.string "block";
+       label##.style##.fontWeight := Js.string "600";
+       label##.style##.marginBottom := Js.string "4px";
+       let value = Dom_html.createSpan doc in
+       value##.style##.cssFloat := Js.string "right";
+       value##.style##.fontWeight := Js.string "600";
+       value##.style##.marginLeft := Js.string "6px";
+       Dom.appendChild (label :> Dom.node Js.t) (value :> Dom.node Js.t);
+       let slider = Dom_html.createInput ~_type:(Js.string "range") doc in
+       slider##setAttribute (Js.string "style") (Js.string "width:100%");
+       Dom.appendChild (row :> Dom.node Js.t) (label :> Dom.node Js.t);
+       Dom.appendChild (row :> Dom.node Js.t) (slider :> Dom.node Js.t);
+       Dom.appendChild (p   :> Dom.node Js.t) (row   :> Dom.node Js.t);
+       (row, (value :> Dom_html.element Js.t), slider)
    
-           (* Slider bloğu: input ve değer göstergesi span; ID’ler ile erişeceğiz *)
-           let mk_slider ~id ~label ~value =
-             let label_span = Html.span [Html.txt label] in
-             let input =
-               Html.input
-                 ~a:[ Html.a_id id
-                    ; Html.a_input_type `Range
-                    ; Html.a_value value
-                    ; Html.a_style "vertical-align:middle;margin-left:8px" ] ()
-             in
-             let out_span =
-               Html.span
-                 ~a:[ Html.a_id (id ^ "-val")
-                    ; Html.a_style "display:inline-block;min-width:36px;margin-left:6px" ]
-                 [ Html.txt value ]
-             in
-             Html.div ~a:[Html.a_style "margin-top:6px"] [label_span; input; out_span]
-           in
+     let set_attr (el: #Dom_html.element Js.t) k v =
+       el##setAttribute (Js.string k) (Js.string v)
    
-           let speed_div  = mk_slider ~id:"speed-range"  ~label:"Speed"  ~value:(Printf.sprintf "%.1f" !(Config.speed)) in
-           let radius_div = mk_slider ~id:"radius-range" ~label:"Radius" ~value:(Printf.sprintf "%.0f" !(Config.radius)) in
+     let float_to_str f = Printf.sprintf "%.3f" f
+     let px_to_str f = Printf.sprintf "%d px" (int_of_float f)
    
-           let panel =
-             Html.div
-               ~a:[ Html.a_id "controls"
-                  ; Html.a_style "position:fixed;top:8px;right:8px;z-index:9999;\
-                                  background:rgba(0,0,0,0.35);padding:8px 10px;border-radius:8px;\
-                                  font:14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;\
-                                  color:#fff;user-select:none" ]
-               [ btn; speed_div; radius_div ]
-           in
+     let make_sliders (p:Dom_html.divElement Js.t) =
+       let open Js_of_ocaml_lwt in
+       let (_r1, v1, s1) = add_row p "Infection probability" in
+       set_attr s1 "min" "0.0"; set_attr s1 "max" "0.2"; set_attr s1 "step" "0.005";
+       set_attr s1 "value" (float_to_str !(Params.infection_prob));
+       v1##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.infection_prob)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s1 (fun _ _ ->
+           let f = float_of_string (Js.to_string s1##.value) in
+           Params.infection_prob := f;
+           v1##.textContent := Js.Opt.return (Js.string (float_to_str f));
+           Lwt.return_unit));
    
-           (* DOM’a ekle *)
-           let dom = To_dom.of_div panel in
-           let body = Dom_html.document##.body in
-           Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let (_r2, v2, s2) = add_row p "Jitter probability" in
+       set_attr s2 "min" "0.0"; set_attr s2 "max" "0.1"; set_attr s2 "step" "0.005";
+       set_attr s2 "value" (float_to_str !(Params.jitter_prob));
+       v2##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.jitter_prob)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s2 (fun _ _ ->
+           let f = float_of_string (Js.to_string s2##.value) in
+           Params.jitter_prob := f;
+           v2##.textContent := Js.Opt.return (Js.string (float_to_str f));
+           Lwt.return_unit));
    
-           (* Referansları DOM’dan çek *)
-           let btn_dom    = Js.Opt.get (Dom_html.CoerceTo.button (Dom_html.getElementById "btn-pause")) (fun () -> assert false) in
-           let speed_dom  = Js.Opt.get (Dom_html.CoerceTo.input  (Dom_html.getElementById "speed-range")) (fun () -> assert false) in
-           let radius_dom = Js.Opt.get (Dom_html.CoerceTo.input  (Dom_html.getElementById "radius-range")) (fun () -> assert false) in
-           let speed_out  = Dom_html.getElementById "speed-range-val" in
-           let radius_out = Dom_html.getElementById "radius-range-val" in
+       let (_r3, v3, s3) = add_row p "Turn min (s)" in
+       set_attr s3 "min" "0.3"; set_attr s3 "max" "6.0"; set_attr s3 "step" "0.1";
+       set_attr s3 "value" (float_to_str !(Params.turn_min_s));
+       v3##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_min_s)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s3 (fun _ _ ->
+           let f = float_of_string (Js.to_string s3##.value) in
+           Params.turn_min_s := min f !(Params.turn_max_s);
+           set_attr s3 "value" (float_to_str !(Params.turn_min_s));
+           v3##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_min_s)));
+           Lwt.return_unit));
    
-           (* min/max/step’i setAttribute ile ver *)
-           let set_attr (el : Dom_html.inputElement Js.t) k v =
-             el##setAttribute (Js.string k) (Js.string v)
-           in
-           set_attr speed_dom "min" "0";   set_attr speed_dom "max" "3";   set_attr speed_dom "step" "0.1";
-           set_attr radius_dom "min" "5";  set_attr radius_dom "max" "80"; set_attr radius_dom "step" "1";
+       let (_r4, v4, s4) = add_row p "Turn max (s)" in
+       set_attr s4 "min" "0.4"; set_attr s4 "max" "8.0"; set_attr s4 "step" "0.1";
+       set_attr s4 "value" (float_to_str !(Params.turn_max_s));
+       v4##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_max_s)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s4 (fun _ _ ->
+           let f = float_of_string (Js.to_string s4##.value) in
+           Params.turn_max_s := max f !(Params.turn_min_s);
+           set_attr s4 "value" (float_to_str !(Params.turn_max_s));
+           v4##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_max_s)));
+           Lwt.return_unit));
    
-           (* Pause/Resume *)
-           let update_btn () =
-             btn_dom##.textContent := Js.Opt.return (Js.string (if !(Config.paused) then "Resume" else "Pause"))
-           in
-           update_btn ();
+       let (_r5, v5, s5) = add_row p "Reproduce min (s)" in
+       set_attr s5 "min" "1.0"; set_attr s5 "max" "40.0"; set_attr s5 "step" "0.5";
+       set_attr s5 "value" (float_to_str !(Params.reproduce_min));
+       v5##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_min)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s5 (fun _ _ ->
+           let f = float_of_string (Js.to_string s5##.value) in
+           Params.reproduce_min := min f !(Params.reproduce_max);
+           set_attr s5 "value" (float_to_str !(Params.reproduce_min));
+           v5##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_min)));
+           Lwt.return_unit));
    
-           let open Js_of_ocaml_lwt in
-           Lwt.async (fun () ->
-             Lwt_js_events.clicks btn_dom (fun _ _ ->
-               Config.paused := not !(Config.paused);
-               update_btn ();
-               Lwt.return_unit));
+       let (_r6, v6, s6) = add_row p "Reproduce max (s)" in
+       set_attr s6 "min" "2.0"; set_attr s6 "max" "60.0"; set_attr s6 "step" "0.5";
+       set_attr s6 "value" (float_to_str !(Params.reproduce_max));
+       v6##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_max)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s6 (fun _ _ ->
+           let f = float_of_string (Js.to_string s6##.value) in
+           Params.reproduce_max := max f !(Params.reproduce_min);
+           set_attr s6 "value" (float_to_str !(Params.reproduce_max));
+           v6##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_max)));
+           Lwt.return_unit));
    
-           (* Speed slider *)
-           let set_speed_display v =
-             speed_out##.textContent := Js.Opt.return (Js.string (Printf.sprintf "%.1f" v))
-           in
-           set_speed_display !(Config.speed);
-           Lwt.async (fun () ->
-             Lwt_js_events.inputs speed_dom (fun _ _ ->
-               let v = float_of_string (Js.to_string speed_dom##.value) in
-               Config.speed := max 0.0 (min 3.0 v);
-               set_speed_display !(Config.speed);
-               Lwt.return_unit));
+       let (_r7, v7, s7) = add_row p "Max creets" in
+       set_attr s7 "min" "10"; set_attr s7 "max" "120"; set_attr s7 "step" "1";
+       set_attr s7 "value" (string_of_int !(Params.max_creets));
+       v7##.textContent := Js.Opt.return (Js.string (string_of_int !(Params.max_creets)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s7 (fun _ _ ->
+           let v = int_of_string (Js.to_string s7##.value) in
+           Params.max_creets := v;
+           v7##.textContent := Js.Opt.return (Js.string (string_of_int v));
+           Lwt.return_unit));
    
-           (* Radius slider *)
-           let set_radius_display v =
-             radius_out##.textContent := Js.Opt.return (Js.string (Printf.sprintf "%.0f" v))
-           in
-           set_radius_display !(Config.radius);
-           Lwt.async (fun () ->
-             Lwt_js_events.inputs radius_dom (fun _ _ ->
-               let v = float_of_string (Js.to_string radius_dom##.value) in
-               Config.radius := max 5.0 (min 80.0 v);
-               set_radius_display !(Config.radius);
-               Lwt.return_unit));
-           ()
+       let (_r8, v8, s8) = add_row p "River height (px)" in
+       set_attr s8 "min" "0"; set_attr s8 "max" "240"; set_attr s8 "step" "5";
+       set_attr s8 "value" (string_of_int (int_of_float !(Params.river_h)));
+       v8##.textContent := Js.Opt.return (Js.string (px_to_str !(Params.river_h)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s8 (fun _ _ ->
+           let v = float_of_string (Js.to_string s8##.value) in
+           Params.river_h := v; Overlay.set_band_heights ();
+           v8##.textContent := Js.Opt.return (Js.string (px_to_str v));
+           Lwt.return_unit));
+   
+       let (_r9, v9, s9) = add_row p "Hospital height (px)" in
+       set_attr s9 "min" "40"; set_attr s9 "max" "300"; set_attr s9 "step" "5";
+       set_attr s9 "value" (string_of_int (int_of_float !(Params.hospital_h)));
+       v9##.textContent := Js.Opt.return (Js.string (px_to_str !(Params.hospital_h)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s9 (fun _ _ ->
+           let v = float_of_string (Js.to_string s9##.value) in
+           Params.hospital_h := v; Overlay.set_band_heights ();
+           v9##.textContent := Js.Opt.return (Js.string (px_to_str v));
+           Lwt.return_unit));
+   
+       let (_r10, v10, s10) = add_row p "Difficulty step (per 0.5s)" in
+       set_attr s10 "min" "0.0"; set_attr s10 "max" "0.05"; set_attr s10 "step" "0.001";
+       set_attr s10 "value" (float_to_str !(Params.difficulty_step));
+       v10##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.difficulty_step)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s10 (fun _ _ ->
+           let f = float_of_string (Js.to_string s10##.value) in
+           Params.difficulty_step := f;
+           v10##.textContent := Js.Opt.return (Js.string (float_to_str f));
+           Lwt.return_unit));
+   
+       let (_r11, v11, s11) = add_row p "Initial creets (at Play)" in
+       set_attr s11 "min" "4"; set_attr s11 "max" "40"; set_attr s11 "step" "1";
+       set_attr s11 "value" (string_of_int !(Params.initial_creets));
+       v11##.textContent := Js.Opt.return (Js.string (string_of_int !(Params.initial_creets)));
+       Lwt.async (fun () ->
+         Lwt_js_events.inputs s11 (fun _ _ ->
+           let v = int_of_string (Js.to_string s11##.value) in
+           Params.initial_creets := v;
+           v11##.textContent := Js.Opt.return (Js.string (string_of_int v));
+           Lwt.return_unit));
+       ()
+     
+     let toggle () =
+       let p = ensure_panel () in
+       if Js.to_string p##.style##.display = "none" then (
+         p##.style##.display := Js.string "block";
+         if p##.childNodes##.length = 0 then make_sliders p
+       ) else (
+         p##.style##.display := Js.string "none"
+       )
+   end
+   
+   module%client Game = struct
+     open Js_of_ocaml
+   
+     let start () =
+       if not !(Runtime.game_started) then (
+         Runtime.game_started := true;
+         Difficulty.start ();
+         Stats.refresh ();
+         Input.install ();
+         Timer.start ();
+         Collider.start ();
+         Random.self_init ();
+         let w = float_of_int Dom_html.window##.innerWidth
+         and h = float_of_int Dom_html.window##.innerHeight in
+         for i=1 to !(Params.initial_creets) do
+           let x = Random.float (max 1. (w -. Const.base_size)) in
+           let y = Random.float (max 1. (h -. Const.base_size)) in
+           let c = Creet.create ~id:i ~x ~y () in
+           World.add c;
+           Movement.start c;
+           Movement.start_reproduction c;
+         done;
+       )
+   
+     (* Replay: ayarlar korunur; sahne temizlenir; epoch artar *)
+     let replay () =
+       (* GAME OVER panelini gizle *)
+       (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "gameover")) with
+        | Some g -> g##.style##.display := Js.string "none"
+        | None -> ());
+       (* Yeni oyun: epoch arttır *)
+       Session.epoch := !Session.epoch + 1;
+       (* Eski creet DOM’larını kaldır *)
+       World.all ()
+       |> List.iter (fun c ->
+            Js.Opt.iter c.Creet.elt##.parentNode (fun p ->
+              ignore (Dom.removeChild p (c.Creet.elt :> Dom.node Js.t))));
+       World.creets := [];
+       (* Sayaç ve durumlar *)
+       Stats.dead_total := 0;
+       Stats.refresh ();
+       Config.paused := false;
+       Runtime.game_over := false;
+       Runtime.game_started := true;
+       Difficulty.base := 1.0;
+       (* Collider ve sayaç restart *)
+       Timer.start ();
+       Collider.start ();
+       (* Yeni nüfus *)
+       let w = float_of_int Dom_html.window##.innerWidth
+       and h = float_of_int Dom_html.window##.innerHeight in
+       Random.self_init ();
+       for i=1 to !(Params.initial_creets) do
+         let x = Random.float (max 1. (w -. Const.base_size)) in
+         let y = Random.float (max 1. (h -. Const.base_size)) in
+         let c = Creet.create ~id:i ~x ~y () in
+         World.add c;
+         Movement.start c;
+         Movement.start_reproduction c;
+       done
    end
    
    (* ─────────────────────────────────────────────────────────────────────────── *)
@@ -439,7 +1162,6 @@
        let body = Dom_html.document##.body in
        body##.style##.margin   := Js.string "0";
        body##.style##.overflow := Js.string "hidden";
-   
        let sim = Dom_html.getElementById "sim" in
        sim##.style##.position := Js.string "fixed";
        sim##.style##.top      := Js.string "0";
@@ -448,36 +1170,15 @@
        sim##.style##.bottom   := Js.string "0";
        sim##.style##.background := Js.string "#111";
    
-       Random.self_init ();
+       (* Replay butonu için callback bağla *)
+       Callbacks.on_replay := (fun () -> Game.replay ());
    
-       let w = float_of_int Dom_html.window##.innerWidth in
-       let h = float_of_int Dom_html.window##.innerHeight in
-   
-       (* Başlangıç popülasyonu *)
-       let n = 12 in
-       let rec spawn i first_opt =
-         if i = 0 then first_opt
-         else
-           let x = Random.float (max 1. (w -. 20.)) in
-           let y = Random.float (max 1. (h -. 20.)) in
-           let c = Creet.create ~id:i ~x ~y in
-           World.add c;
-           Movement.start c;
-           Reproduction.start c;
-           let first_opt = match first_opt with None -> Some c | some -> some in
-           spawn (i - 1) first_opt
-       in
-       let first = match spawn n None with Some c -> c | None ->
-         let c = Creet.create ~id:1 ~x:(w /. 2.) ~y:(h /. 2.) in
-         World.add c; Movement.start c; Reproduction.start c; c
-       in
-   
-       Disease.set_state first Infected;
-       Disease.start_death_timer first;
-   
-       (* HUD’ler *)
        Stats.refresh ();
-       Controls.init ();
+       Overlay.init_bands ();
+       Overlay.init_pause_button ();
+       Overlay.init_menu_button ~on_click:(fun () -> Settings.toggle ());
+       Overlay.show_play_overlay ~on_play:(fun () -> Game.start ());
    
-       Lwt.return_unit)
+       Lwt.return_unit
+     )
    
