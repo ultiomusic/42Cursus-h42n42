@@ -35,10 +35,6 @@
      let mean_scale    = 0.85
      let berserk_max   = 4.0
      let infection_life= 15.0
-     let col_healthy   = "#4cff4c"
-     let col_infected  = "#ff6243"
-     let col_mean      = "#ffd400"
-     let col_berserk   = "#ff33ff"
    end
    
    module%client Params = struct
@@ -87,12 +83,10 @@
        ) else Lwt.return_unit
    end
    
-   (* Yeni: epoch sistemi — replay’de eski döngüleri sonlandırmak için *)
    module%client Session = struct
      let epoch = ref 0
    end
    
-   (* Oyun dışından tetiklenecek callback’ler için *)
    module%client Callbacks = struct
      let on_replay : (unit -> unit) ref = ref (fun () -> ())
    end
@@ -100,11 +94,10 @@
    (* ─────────────────────────────────────────────────────────────────────────── *)
    module%client Creet = struct
      open Js_of_ocaml
-     module C = Const
    
      type t = {
        id       : int;
-       epoch    : int;   (* yeni alan: hangi oyunda üretildi *)
+       epoch    : int;
        mutable x: float;
        mutable y: float;
        mutable vx: float;
@@ -118,17 +111,18 @@
        elt      : Dom_html.divElement Js.t;
      }
    
-     let size (c:t) = C.base_size *. c.size_scale
+     let size (c:t) = Const.base_size *. c.size_scale
      let radius (c:t) = (size c) /. 2.0
      let center (c:t) = (c.x +. radius c, c.y +. radius c)
    
-     let color_for (c:t) =
-       match c.state, c.kind with
-       | Healthy, _          -> C.col_healthy
-       | Infected, Berserk   -> C.col_berserk
-       | Infected, Mean      -> C.col_mean
-       | Infected, Normal    -> C.col_infected
-       | Dead, _             -> "#808080"
+     let class_string (c:t) =
+       let st = match c.state with Healthy -> "healthy" | Infected -> "infected" | Dead -> "dead" in
+       let kd = match c.kind  with Normal  -> "normal"  | Mean     -> "mean"     | Berserk -> "berserk" in
+       let grabbed = if c.grabbed then " grabbed" else "" in
+       Printf.sprintf "creet %s %s%s" st kd grabbed
+   
+     let apply_classes (c:t) =
+       c.elt##.className := Js.string (class_string c)
    
      let apply_visual (c:t) =
        let sz = size c |> int_of_float in
@@ -136,30 +130,12 @@
        c.elt##.style##.height := Js.string (Printf.sprintf "%dpx" sz);
        c.elt##.style##.left   := Js.string (Printf.sprintf "%dpx" (int_of_float c.x));
        c.elt##.style##.top    := Js.string (Printf.sprintf "%dpx" (int_of_float c.y));
-       c.elt##.style##.background := Js.string (color_for c);
-       c.elt##.style##.borderRadius := Js.string "50%";
-       let border =
-         match c.kind with
-         | Berserk -> "2px solid #fff"
-         | Mean    -> "2px solid #ff0"
-         | Normal  -> "none"
-       in
-       c.elt##.style##.border := Js.string border;
-       ignore ((c.elt##.style)##setProperty (Js.string "box-shadow")
-                  (Js.string (match c.kind with
-                              | Berserk -> "0 0 8px 2px rgba(255,255,255,0.6)"
-                              | _       -> "none"))
-                  Js.Optdef.empty)
+       apply_classes c
    
      let make_dom ~id ~x:_ ~y:_ =
        let elt =
          Js_of_ocaml_tyxml.Tyxml_js.Html.(
-           div
-             ~a:[
-               a_class ["creet"];
-               a_id (Printf.sprintf "creet-%d" id);
-               a_style "position:absolute;left:0;top:0"
-             ] []
+           div ~a:[ a_id (Printf.sprintf "creet-%d" id); a_class ["creet"; "healthy"; "normal"] ] []
          )
        in
        Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_div elt
@@ -181,8 +157,7 @@
          next_turn = !(Params.turn_min_s) +. Random.float (!(Params.turn_max_s) -. !(Params.turn_min_s));
          elt
        } in
-       apply_visual c;
-       c
+       apply_visual c; c
    
      let set_size_scale (c:t) (s:float) =
        let old_r = radius c in
@@ -200,18 +175,18 @@
          set_size_scale c 1.0;
          c.vx <- c.vx /. Params.slow_on_infect;
          c.vy <- c.vy /. Params.slow_on_infect;
-         apply_visual c
+         apply_classes c
        )
    
      let to_berserk (c:t) =
        c.kind <- Berserk;
        c.life_left <- Some Const.infection_life;
-       apply_visual c
+       apply_classes c
    
      let to_mean (c:t) =
        c.kind <- Mean;
        set_size_scale c Const.mean_scale;
-       apply_visual c
+       apply_classes c
    
      let infect (c:t) =
        if c.state = Healthy && not c.grabbed then (
@@ -221,8 +196,8 @@
          c.vy <- c.vy *. Params.slow_on_infect;
          let r = Random.float 1.0 in
          if r < 0.10 then to_berserk c
-         else if r < 0.20 then to_mean c;
-         apply_visual c
+         else if r < 0.20 then to_mean c
+         else apply_classes c
        )
    end
    
@@ -250,10 +225,7 @@
      let running        = ref false
    
      let now_ms () = (new%js Js.date_now)##getTime
-   
-     let format (secs:int) =
-       let m = secs / 60 and s = secs mod 60 in
-       Printf.sprintf "%02d:%02d" m s
+     let format (secs:int) = Printf.sprintf "%02d:%02d" (secs/60) (secs mod 60)
    
      let elapsed_ms () =
        match !start_ms with
@@ -282,21 +254,15 @@
              let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.25 in
              loop ()
            ) else Lwt.return_unit
-         in
-         loop ()
+         in loop ()
        )
    
      let pause () =
-       match !pause_start_ms with
-       | Some _ -> ()
-       | None -> pause_start_ms := Some (now_ms ())
-   
+       match !pause_start_ms with Some _ -> () | None -> pause_start_ms := Some (now_ms ())
      let resume () =
        match !pause_start_ms with
        | None -> ()
-       | Some p ->
-           paused_acc_ms := !paused_acc_ms +. (now_ms () -. p);
-           pause_start_ms := None
+       | Some p -> paused_acc_ms := !paused_acc_ms +. (now_ms () -. p); pause_start_ms := None
    end
    
    module%client Stats = struct
@@ -308,32 +274,20 @@
        | Some _ -> ()
        | None ->
            let open Js_of_ocaml_tyxml.Tyxml_js in
-           let s id =
-             Html.span ~a:[Html.a_id id; Html.a_style "min-width:46px;display:inline-block;text-align:right"] [Html.txt "00:00"]
+           let v ?(id="") init =
+             Html.span ~a:[ Html.a_class ["hud__val"]; (if id="" then Html.a_class [] else Html.a_id id) ] [Html.txt init]
            in
-           let n id =
-             Html.span ~a:[Html.a_id id; Html.a_style "min-width:28px;display:inline-block;text-align:right"] [Html.txt "0"]
+           let wrap =
+             Html.div ~a:[ Html.a_id "hud"; Html.a_class ["hud"] ] [
+               Html.span [Html.txt "Time: "]; v ~id:"stat-time" "00:00"; Html.txt "  ";
+               Html.span [Html.txt "Alive: "]; v ~id:"stat-alive" "0"; Html.txt "  ";
+               Html.span [Html.txt "Healthy: "]; v ~id:"stat-healthy" "0"; Html.txt "  ";
+               Html.span [Html.txt "Infected: "]; v ~id:"stat-infected" "0"; Html.txt "  ";
+               Html.span [Html.txt "Dead: "]; v ~id:"stat-dead" "0";
+             ]
            in
-           let overlay =
-             Html.div
-               ~a:[
-                 Html.a_id "hud";
-                 Html.a_style "position:fixed;top:8px;left:8px;z-index:9999;\
-                               background:rgba(0,0,0,0.35);padding:6px 10px;border-radius:8px;\
-                               font:14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;\
-                               color:#fff;user-select:none"
-               ]
-               [
-                 Html.span [Html.txt "Time: "]; s "stat-time";  Html.txt "  ";
-                 Html.span [Html.txt "Alive: "]; n "stat-alive";   Html.txt "  ";
-                 Html.span [Html.txt "Healthy: "]; n "stat-healthy"; Html.txt "  ";
-                 Html.span [Html.txt "Infected: "]; n "stat-infected"; Html.txt "  ";
-                 Html.span [Html.txt "Dead: "]; n "stat-dead";
-               ]
-           in
-           let dom = To_dom.of_div overlay in
-           let body = Dom_html.document##.body in
-           Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t)
+           let dom = Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_div wrap in
+           Dom.appendChild (Dom_html.document##.body :> Dom.node Js.t) (dom :> Dom.node Js.t)
    
      let set_text id v =
        let el = Dom_html.getElementById id in
@@ -344,12 +298,8 @@
        let healthy, infected =
          List.fold_left
            (fun (h, i) (c : Creet.t) ->
-             match c.Creet.state with
-             | Healthy  -> (h + 1, i)
-             | Infected -> (h, i + 1)
-             | Dead     -> (h, i))
-           (0, 0)
-           (World.all ())
+             match c.Creet.state with Healthy -> (h+1,i) | Infected -> (h,i+1) | Dead -> (h,i))
+           (0, 0) (World.all ())
        in
        let alive = healthy + infected in
        set_text "stat-healthy" (string_of_int healthy);
@@ -359,37 +309,33 @@
    
      let on_death () = incr dead_total; refresh ()
    
+     (* Tek overlay + doğrudan bağlanan listener *)
      let show_game_over () =
        if not !(Runtime.game_over) then (
          Runtime.game_over := true;
+   
+         (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "settings-panel")) with
+          | Some sp -> sp##.classList##add (Js.string "is-hidden")
+          | None -> ());
+   
+         (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "gameover")) with
+          | Some old -> Js.Opt.iter old##.parentNode (fun p -> ignore (Dom.removeChild p (old :> Dom.node Js.t)))
+          | None -> ());
+   
          let open Js_of_ocaml_tyxml.Tyxml_js in
-         let time_txt = Timer.elapsed_string () in
          let panel =
-           Html.div
-             ~a:[ Html.a_id "gameover"
-                ; Html.a_style "position:fixed;inset:0;display:flex;align-items:center;justify-content:center;\
-                                background:rgba(0,0,0,0.65);z-index:10010" ]
-             [ Html.div
-                 ~a:[ Html.a_style "color:#fff;text-align:center" ]
-                 [ Html.div
-                     ~a:[ Html.a_style "font:700 48px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;\
-                                          text-shadow:0 2px 6px rgba(0,0,0,.6);margin-bottom:10px" ]
-                     [ Html.txt "GAME OVER" ];
-                   Html.div
-                     ~a:[ Html.a_style "font:600 22px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial;\
-                                          margin-bottom:14px" ]
-                     [ Html.txt ("Time: " ^ time_txt) ];
-                   Html.button
-                     ~a:[ Html.a_id "btn-replay"
-                        ; Html.a_style "padding:12px 22px;border-radius:10px;font:700 18px/1.2 -apple-system,Segoe UI,Roboto;\
-                                        background:#00c2ff;color:#013;border:0;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.25)" ]
-                     [ Html.txt "Replay" ]
-                 ] ]
+           Html.div ~a:[ Html.a_id "gameover"; Html.a_class ["overlay"; "overlay--gameover"] ] [
+             Html.div ~a:[ Html.a_class ["gameover__box"] ] [
+               Html.div ~a:[ Html.a_class ["gameover__title"] ] [ Html.txt "GAME OVER" ];
+               Html.div ~a:[ Html.a_class ["gameover__time"] ]  [ Html.txt ("Time: " ^ Timer.elapsed_string ()) ];
+               Html.button ~a:[ Html.a_id "btn-replay"; Html.a_class ["btn"; "btn--primary"] ] [ Html.txt "Replay" ];
+             ]
+           ]
          in
-         let dom = To_dom.of_div panel in
-         let body = Js_of_ocaml.Dom_html.document##.body in
-         Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
-         (* Replay tıklaması: dışarıdaki callback’e delege *)
+         let dom = Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_div panel in
+         Dom.appendChild (Dom_html.document##.body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+   
+         (* Doğrudan butona bağla — BURASI DÜZELTİLDİ *)
          let btn = Js_of_ocaml.Dom_html.getElementById "btn-replay" in
          let open Js_of_ocaml_lwt in
          Lwt.async (fun () ->
@@ -406,20 +352,16 @@
    
      let tick_pair (a:Creet.t) (b:Creet.t) =
        if a.grabbed || b.grabbed then ()
-       else
-         match a.state, b.state with
+       else match a.state, b.state with
          | Infected, Healthy ->
-             if contact a b && Random.float 1.0 < !(Params.infection_prob)
-             then Creet.infect b
+             if contact a b && Random.float 1.0 < !(Params.infection_prob) then Creet.infect b
          | Healthy, Infected ->
-             if contact a b && Random.float 1.0 < !(Params.infection_prob)
-             then Creet.infect a
+             if contact a b && Random.float 1.0 < !(Params.infection_prob) then Creet.infect a
          | _ -> ()
    end
    
    module%client Behavior = struct
      let mean_speed_boost = 1.15 /. Params.slow_on_infect
-   
      let speed_mult (c : Creet.t) =
        match c.kind, c.state with
        | Mean,    Infected -> mean_speed_boost
@@ -437,11 +379,8 @@
               let ox, oy = Creet.center o in
               let dx = sx -. ox and dy = sy -. oy in
               let d2 = dx*.dx +. dy*.dy in
-              match !best with
-              | None -> best := Some (o, d2)
-              | Some (_, bd2) -> if d2 < bd2 then best := Some (o, d2)
-            )
-          );
+              match !best with None -> best := Some (o, d2) | Some (_, bd2) -> if d2 < bd2 then best := Some (o, d2)
+            ));
        match !best with Some (o, _) -> Some o | None -> None
    
      let nudge_towards (c : Creet.t) (tx,ty) strength =
@@ -458,12 +397,10 @@
      let update (c : Creet.t) =
        match c.state, c.kind with
        | Infected, Mean ->
-           if Random.float 1.0 < 0.30 then (
-             match nearest c ~pred:(fun o -> o.state = Healthy) with
-             | Some t -> nudge_towards c (Creet.center t) 0.12
-             | None -> ()
-           )
-       | Infected, Berserk -> ()
+           if Random.float 1.0 < 0.30 then
+             (match nearest c ~pred:(fun o -> o.state = Healthy) with
+              | Some t -> nudge_towards c (Creet.center t) 0.12
+              | None -> ())
        | _ -> ()
    end
    
@@ -511,7 +448,6 @@
        !(Params.reproduce_min) +. Random.float (!(Params.reproduce_max) -. !(Params.reproduce_min))
    
      let rec reproduction_loop (parent : Creet.t) : unit Lwt.t =
-       (* epoch kontrolü: eski oyunun döngüsünü bitir *)
        if parent.epoch <> !Session.epoch then Lwt.return_unit
        else if parent.state <> Healthy then Lwt.return_unit
        else if not (World.any_healthy ()) then Lwt.return_unit
@@ -541,13 +477,14 @@
      and start_reproduction (c : Creet.t) = Lwt.async (fun () -> reproduction_loop c)
    
      and loop (c : Creet.t) : unit Lwt.t =
-       (* epoch kontrolü: replay sonrası eski creet’in döngüsünü bitir *)
        if c.epoch <> !Session.epoch then Lwt.return_unit
        else if c.state = Dead then Lwt.return_unit
        else (
          let%lwt () = Runtime.wait_unpaused () in
          let spd_scale = !(Difficulty.base) *. Behavior.speed_mult c in
    
+         (* Ölüm kontrolü *)
+         let died_now = ref false in
          (match c.life_left, c.state with
           | Some t, Infected ->
               let t' = t -. 0.016 in
@@ -560,30 +497,34 @@
                | _ -> ());
               if t' <= 0.0 then (
                 c.state <- Dead;
-                c.vx <- 0.; c.vy <- 0.;
-                c.elt##.style##.display := Js.string "none";
+                Js_of_ocaml.Js.Opt.iter c.elt##.parentNode (fun p ->
+                  ignore (Js_of_ocaml.Dom.removeChild p (c.elt :> Js_of_ocaml.Dom.node Js.t)));
                 World.remove c;
                 Stats.on_death ();
+                died_now := true
               )
           | _ -> ());
    
-         Behavior.update c;
+         if !died_now then Lwt.return_unit
+         else (
+           Behavior.update c;
    
-         if not c.grabbed then (
-           turn_tick c 0.016;
-           c.x <- c.x +. (c.vx *. spd_scale);
-           c.y <- c.y +. (c.vy *. spd_scale);
-           bounce c;
-           if c.state = Healthy && in_river c then Creet.infect c
-         );
+           if not c.grabbed then (
+             turn_tick c 0.016;
+             c.x <- c.x +. (c.vx *. spd_scale);
+             c.y <- c.y +. (c.vy *. spd_scale);
+             bounce c;
+             if c.state = Healthy && in_river c then Creet.infect c
+           );
    
-         Creet.apply_visual c;
+           Creet.apply_visual c;
    
-         if (World.count () = 0) || (World.count_healthy () = 0) then (
-           Stats.refresh (); Stats.show_game_over (); Lwt.return_unit
-         ) else (
-           let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.016 in
-           loop c
+           if (World.count () = 0) || (World.count_healthy () = 0) then (
+             Stats.refresh (); Stats.show_game_over (); Lwt.return_unit
+           ) else (
+             let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.016 in
+             loop c
+           )
          )
        )
    
@@ -658,15 +599,13 @@
    
    module%client Collider = struct
      open Quad
-   
      let max_other_radius = (Const.base_size *. Const.berserk_max) /. 2.0
    
      let build_tree () =
        let w = float_of_int Js_of_ocaml.Dom_html.window##.innerWidth
        and h = float_of_int Js_of_ocaml.Dom_html.window##.innerHeight in
        let root = create { x=0.; y=0.; w; h } 8 in
-       World.all ()
-       |> List.iter (fun (c:Creet.t) -> if c.state <> Dead then ignore (insert root c));
+       World.all () |> List.iter (fun (c:Creet.t) -> if c.state <> Dead then ignore (insert root c));
        root
    
      let process_pairs root =
@@ -680,8 +619,7 @@
               query root range acc;
               List.iter (fun (o:Creet.t) ->
                 if o != c && o.id > c.id && o.state <> Dead then (
-                  Infection.tick_pair c o;
-                  Infection.tick_pair o c;
+                  Infection.tick_pair c o; Infection.tick_pair o c;
                 )
               ) !acc
             )
@@ -698,37 +636,27 @@
              let%lwt () = Js_of_ocaml_lwt.Lwt_js.sleep 0.016 in
              loop ()
            )
-         in
-         loop ()
+         in loop ()
        )
    end
    
    module%client Input = struct
      open Js_of_ocaml
    
-     type drag = {
-       mutable active: bool;
-       mutable target: Creet.t option;
-       mutable offx : float;
-       mutable offy : float;
-     }
-   
+     type drag = { mutable active: bool; mutable target: Creet.t option; mutable offx: float; mutable offy: float }
      let d = { active=false; target=None; offx=0.; offy=0. }
    
      let element_pos (e:Dom_html.element Js.t) =
-       let r = e##getBoundingClientRect in
-       (r##.left, r##.top)
+       let r = e##getBoundingClientRect in (r##.left, r##.top)
    
      let mouse_pos_in (e:Dom_html.element Js.t) (ev:Dom_html.mouseEvent Js.t) =
-       let ex, ey = element_pos e in
-       (float_of_int ev##.clientX -. ex, float_of_int ev##.clientY -. ey)
+       let ex, ey = element_pos e in (float_of_int ev##.clientX -. ex, float_of_int ev##.clientY -. ey)
    
      let try_pick (x:float) (y:float) : Creet.t option =
        let within (c:Creet.t) =
          let cx, cy = Creet.center c in
          let r = Creet.radius c in
-         let dx = x -. cx and dy = y -. cy in
-         (dx *. dx +. dy *. dy) <= r *. r
+         let dx = x -. cx and dy = y -. cy in (dx *. dx +. dy *. dy) <= r *. r
        in
        World.all () |> List.find_opt within
    
@@ -743,10 +671,9 @@
              match try_pick x y with
              | None -> Lwt.return_unit
              | Some c ->
-                 d.active <- true; d.target <- Some c; c.grabbed <- true;
+                 d.active <- true; d.target <- Some c; c.grabbed <- true; Creet.apply_classes c;
                  let cx, cy = Creet.center c in
                  d.offx <- x -. cx; d.offy <- y -. cy;
-                 ignore ((c.elt##.style)##setProperty (Js.string "outline") (Js.string "2px solid #0ff") Js.Optdef.empty);
                  Lwt.return_unit
            ) else Lwt.return_unit));
    
@@ -761,19 +688,15 @@
                and ny = y -. d.offy -. Creet.radius c in
                let nx = max 0. (min (w -. Creet.size c) nx)
                and ny = max 0. (min (h -. Creet.size c) ny) in
-               c.x <- nx; c.y <- ny;
-               Creet.apply_visual c;
-               Lwt.return_unit
+               c.x <- nx; c.y <- ny; Creet.apply_visual c; Lwt.return_unit
            | _ -> Lwt.return_unit));
    
        Lwt.async (fun () ->
          Lwt_js_events.mouseups Dom_html.document (fun _ _ ->
            match d.target with
            | Some c ->
-               d.active <- false; d.target <- None; c.grabbed <- false;
-               ignore ((c.elt##.style)##setProperty (Js.string "outline") (Js.string "none") Js.Optdef.empty);
-               if c.state = Infected && Movement.in_hospital c
-               then Creet.heal c;
+               d.active <- false; d.target <- None; c.grabbed <- false; Creet.apply_classes c;
+               if c.state = Infected && Movement.in_hospital c then Creet.heal c;
                Lwt.return_unit
            | None -> Lwt.return_unit));
        ()
@@ -793,36 +716,21 @@
      let init_bands () =
        let doc = Dom_html.document in
        let sim = Dom_html.getElementById "sim" in
-       let mk id style =
+       let mk id classes =
          let d = Dom_html.createDiv doc in
          d##.id := Js.string id;
-         d##.style##.position := Js.string "absolute";
-         d##.style##.left := Js.string "0"; d##.style##.right := Js.string "0";
-         d##.style##.pointerEvents := Js.string "none";
-         (match id with
-          | "river"    -> d##.style##.top := Js.string "0";
-          | "hospital" -> d##.style##.bottom := Js.string "0";
-          | _ -> ());
-         d##.style##.background := Js.string style;
+         d##.className := Js.string classes;
          Dom.appendChild (sim :> Dom.node Js.t) (d :> Dom.node Js.t)
        in
-       mk "river" "linear-gradient(180deg,#5ef 0%,#38a 100%)";
-       mk "hospital" "linear-gradient(180deg,#282,#0b0)";
+       mk "river" "band band--river";
+       mk "hospital" "band band--hospital";
        set_band_heights ()
    
      let init_pause_button () =
        let open Js_of_ocaml_tyxml.Tyxml_js in
-       let btn =
-         Html.button
-           ~a:[ Html.a_id "btn-pause"
-              ; Html.a_style "position:fixed;top:8px;right:56px;z-index:9999;cursor:pointer;\
-                              background:rgba(0,0,0,0.35);color:#fff;border:0;border-radius:8px;padding:6px 12px;\
-                              font:14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial" ]
-           [ Html.txt "Pause" ]
-       in
-       let dom = To_dom.of_button btn in
-       let body = Js_of_ocaml.Dom_html.document##.body in
-       Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let btn = Html.button ~a:[ Html.a_id "btn-pause"; Html.a_class ["btn"; "btn--pause"] ] [ Html.txt "Pause" ] in
+       let dom = Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_button btn in
+       Dom.appendChild (Js_of_ocaml.Dom_html.document##.body :> Dom.node Js.t) (dom :> Dom.node Js.t);
        let open Js_of_ocaml_lwt in
        let update () =
          dom##.textContent := Js.Opt.return (Js.string (if !(Config.paused) then "Resume" else "Pause"))
@@ -834,48 +742,31 @@
              Config.paused := not !(Config.paused);
              if !(Config.paused) then Timer.pause () else Timer.resume ();
              update ()
-           );
-           Lwt.return_unit))
+           ); Lwt.return_unit))
    
      let init_menu_button ~on_click =
        let open Js_of_ocaml_tyxml.Tyxml_js in
-       let btn =
-         Html.button
-           ~a:[ Html.a_id "btn-menu"
-              ; Html.a_title "Settings"
-              ; Html.a_style "position:fixed;top:8px;right:8px;z-index:10001;cursor:pointer;\
-                              width:36px;height:36px;background:rgba(0,0,0,0.35);color:#fff;border:0;border-radius:8px;\
-                              display:flex;align-items:center;justify-content:center;font-size:20px" ]
-           [ Html.txt "☰" ]
-       in
-       let dom = To_dom.of_button btn in
-       let body = Js_of_ocaml.Dom_html.document##.body in
-       Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let btn = Html.button ~a:[ Html.a_id "btn-menu"; Html.a_title "Settings"; Html.a_class ["btn"; "btn--menu"] ] [ Html.txt "☰" ] in
+       let dom = Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_button btn in
+       Dom.appendChild (Js_of_ocaml.Dom_html.document##.body :> Dom.node Js.t) (dom :> Dom.node Js.t);
        let open Js_of_ocaml_lwt in
        Lwt.async (fun () -> Lwt_js_events.clicks dom (fun _ _ -> on_click (); Lwt.return_unit))
    
      let show_play_overlay ~on_play =
        let open Js_of_ocaml_tyxml.Tyxml_js in
        let overlay =
-         Html.div
-           ~a:[ Html.a_id "play-overlay"
-              ; Html.a_style "position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;\
-                              background:rgba(0,0,0,0.25);backdrop-filter:blur(8px);" ]
-           [ Html.button
-               ~a:[ Html.a_id "btn-play"
-                  ; Html.a_style "padding:16px 28px;border-radius:12px;font:700 24px/1.2 -apple-system,Segoe UI,Roboto;\
-                                  background:#00d084;color:#083;cursor:pointer;border:0;box-shadow:0 8px 24px rgba(0,0,0,.25)" ]
-               [ Html.txt "Play" ] ]
+         Html.div ~a:[ Html.a_id "play-overlay"; Html.a_class ["overlay"; "overlay--play"] ] [
+           Html.button ~a:[ Html.a_id "btn-play"; Html.a_class ["btn"; "btn--play"] ] [ Html.txt "Play" ]
+         ]
        in
-       let dom = To_dom.of_div overlay in
-       let body = Js_of_ocaml.Dom_html.document##.body in
-       Dom.appendChild (body :> Dom.node Js.t) (dom :> Dom.node Js.t);
+       let dom = Js_of_ocaml_tyxml.Tyxml_js.To_dom.of_div overlay in
+       Dom.appendChild (Js_of_ocaml.Dom_html.document##.body :> Dom.node Js.t) (dom :> Dom.node Js.t);
        let play_btn = Js_of_ocaml.Dom_html.getElementById "btn-play" in
        let open Js_of_ocaml_lwt in
        Lwt.async (fun () ->
          Lwt_js_events.clicks play_btn (fun _ _ ->
            (match Js.Opt.to_option (Js_of_ocaml.Dom_html.document##getElementById (Js.string "play-overlay")) with
-            | Some ov -> ov##.style##.display := Js.string "none"
+            | Some ov -> ov##.classList##add (Js.string "is-hidden")
             | None -> ());
            on_play (); Lwt.return_unit))
    end
@@ -890,42 +781,23 @@
        | None ->
            let d = Dom_html.createDiv Dom_html.document in
            d##.id := Js.string "settings-panel";
-           d##.style##.position := Js.string "fixed";
-           d##.style##.top := Js.string "48px";
-           d##.style##.right := Js.string "8px";
-           d##.style##.width := Js.string "320px";
-           d##.style##.maxHeight := Js.string "70vh";
-           d##.style##.overflowY := Js.string "auto";
-           d##.style##.zIndex := Js.string "10002";
-           d##.style##.background := Js.string "rgba(0,0,0,0.75)";
-           d##.style##.color := Js.string "#fff";
-           d##.style##.borderRadius := Js.string "12px";
-           d##.style##.padding := Js.string "12px";
-           d##.style##.display := Js.string "none";
-           ignore ((d##.style)##setProperty (Js.string "backdrop-filter") (Js.string "blur(6px)") Js.Optdef.empty);
-           ignore ((d##.style)##setProperty (Js.string "-webkit-backdrop-filter") (Js.string "blur(6px)") Js.Optdef.empty);
+           d##.className := Js.string "settings is-hidden";
            Dom.appendChild (Dom_html.document##.body :> Dom.node Js.t) (d :> Dom.node Js.t);
            panel_ref := Some d; d
    
-     let add_row
-         (p:Dom_html.divElement Js.t)
-         (title:string)
+     let add_row (p:Dom_html.divElement Js.t) (title:string)
        : Dom_html.divElement Js.t * Dom_html.element Js.t * Dom_html.inputElement Js.t =
        let doc = Dom_html.document in
        let row = Dom_html.createDiv doc in
-       row##.style##.marginBottom := Js.string "10px";
+       row##.className := Js.string "settings__row";
        let label = Dom_html.createSpan doc in
+       label##.className := Js.string "settings__label";
        label##.textContent := Js.Opt.return (Js.string title);
-       label##.style##.display := Js.string "block";
-       label##.style##.fontWeight := Js.string "600";
-       label##.style##.marginBottom := Js.string "4px";
        let value = Dom_html.createSpan doc in
-       value##.style##.cssFloat := Js.string "right";
-       value##.style##.fontWeight := Js.string "600";
-       value##.style##.marginLeft := Js.string "6px";
+       value##.className := Js.string "settings__value";
        Dom.appendChild (label :> Dom.node Js.t) (value :> Dom.node Js.t);
        let slider = Dom_html.createInput ~_type:(Js.string "range") doc in
-       slider##setAttribute (Js.string "style") (Js.string "width:100%");
+       slider##.className := Js.string "settings__slider";
        Dom.appendChild (row :> Dom.node Js.t) (label :> Dom.node Js.t);
        Dom.appendChild (row :> Dom.node Js.t) (slider :> Dom.node Js.t);
        Dom.appendChild (p   :> Dom.node Js.t) (row   :> Dom.node Js.t);
@@ -943,135 +815,104 @@
        set_attr s1 "min" "0.0"; set_attr s1 "max" "0.2"; set_attr s1 "step" "0.005";
        set_attr s1 "value" (float_to_str !(Params.infection_prob));
        v1##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.infection_prob)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s1 (fun _ _ ->
-           let f = float_of_string (Js.to_string s1##.value) in
-           Params.infection_prob := f;
-           v1##.textContent := Js.Opt.return (Js.string (float_to_str f));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s1 (fun _ _ ->
+         let f = float_of_string (Js.to_string s1##.value) in
+         Params.infection_prob := f; v1##.textContent := Js.Opt.return (Js.string (float_to_str f)); Lwt.return_unit));
    
        let (_r2, v2, s2) = add_row p "Jitter probability" in
        set_attr s2 "min" "0.0"; set_attr s2 "max" "0.1"; set_attr s2 "step" "0.005";
        set_attr s2 "value" (float_to_str !(Params.jitter_prob));
        v2##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.jitter_prob)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s2 (fun _ _ ->
-           let f = float_of_string (Js.to_string s2##.value) in
-           Params.jitter_prob := f;
-           v2##.textContent := Js.Opt.return (Js.string (float_to_str f));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s2 (fun _ _ ->
+         let f = float_of_string (Js.to_string s2##.value) in
+         Params.jitter_prob := f; v2##.textContent := Js.Opt.return (Js.string (float_to_str f)); Lwt.return_unit));
    
        let (_r3, v3, s3) = add_row p "Turn min (s)" in
        set_attr s3 "min" "0.3"; set_attr s3 "max" "6.0"; set_attr s3 "step" "0.1";
        set_attr s3 "value" (float_to_str !(Params.turn_min_s));
        v3##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_min_s)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s3 (fun _ _ ->
-           let f = float_of_string (Js.to_string s3##.value) in
-           Params.turn_min_s := min f !(Params.turn_max_s);
-           set_attr s3 "value" (float_to_str !(Params.turn_min_s));
-           v3##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_min_s)));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s3 (fun _ _ ->
+         let f = float_of_string (Js.to_string s3##.value) in
+         Params.turn_min_s := min f !(Params.turn_max_s);
+         v3##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_min_s))); Lwt.return_unit));
    
        let (_r4, v4, s4) = add_row p "Turn max (s)" in
        set_attr s4 "min" "0.4"; set_attr s4 "max" "8.0"; set_attr s4 "step" "0.1";
        set_attr s4 "value" (float_to_str !(Params.turn_max_s));
        v4##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_max_s)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s4 (fun _ _ ->
-           let f = float_of_string (Js.to_string s4##.value) in
-           Params.turn_max_s := max f !(Params.turn_min_s);
-           set_attr s4 "value" (float_to_str !(Params.turn_max_s));
-           v4##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_max_s)));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s4 (fun _ _ ->
+         let f = float_of_string (Js.to_string s4##.value) in
+         Params.turn_max_s := max f !(Params.turn_min_s);
+         v4##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.turn_max_s))); Lwt.return_unit));
    
        let (_r5, v5, s5) = add_row p "Reproduce min (s)" in
        set_attr s5 "min" "1.0"; set_attr s5 "max" "40.0"; set_attr s5 "step" "0.5";
        set_attr s5 "value" (float_to_str !(Params.reproduce_min));
        v5##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_min)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s5 (fun _ _ ->
-           let f = float_of_string (Js.to_string s5##.value) in
-           Params.reproduce_min := min f !(Params.reproduce_max);
-           set_attr s5 "value" (float_to_str !(Params.reproduce_min));
-           v5##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_min)));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s5 (fun _ _ ->
+         let f = float_of_string (Js.to_string s5##.value) in
+         Params.reproduce_min := min f !(Params.reproduce_max);
+         v5##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_min))); Lwt.return_unit));
    
        let (_r6, v6, s6) = add_row p "Reproduce max (s)" in
        set_attr s6 "min" "2.0"; set_attr s6 "max" "60.0"; set_attr s6 "step" "0.5";
        set_attr s6 "value" (float_to_str !(Params.reproduce_max));
        v6##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_max)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s6 (fun _ _ ->
-           let f = float_of_string (Js.to_string s6##.value) in
-           Params.reproduce_max := max f !(Params.reproduce_min);
-           set_attr s6 "value" (float_to_str !(Params.reproduce_max));
-           v6##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_max)));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s6 (fun _ _ ->
+         let f = float_of_string (Js.to_string s6##.value) in
+         Params.reproduce_max := max f !(Params.reproduce_min);
+         v6##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.reproduce_max))); Lwt.return_unit));
    
        let (_r7, v7, s7) = add_row p "Max creets" in
        set_attr s7 "min" "10"; set_attr s7 "max" "120"; set_attr s7 "step" "1";
        set_attr s7 "value" (string_of_int !(Params.max_creets));
        v7##.textContent := Js.Opt.return (Js.string (string_of_int !(Params.max_creets)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s7 (fun _ _ ->
-           let v = int_of_string (Js.to_string s7##.value) in
-           Params.max_creets := v;
-           v7##.textContent := Js.Opt.return (Js.string (string_of_int v));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s7 (fun _ _ ->
+         let v = int_of_string (Js.to_string s7##.value) in
+         Params.max_creets := v; v7##.textContent := Js.Opt.return (Js.string (string_of_int v)); Lwt.return_unit));
    
        let (_r8, v8, s8) = add_row p "River height (px)" in
        set_attr s8 "min" "0"; set_attr s8 "max" "240"; set_attr s8 "step" "5";
        set_attr s8 "value" (string_of_int (int_of_float !(Params.river_h)));
        v8##.textContent := Js.Opt.return (Js.string (px_to_str !(Params.river_h)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s8 (fun _ _ ->
-           let v = float_of_string (Js.to_string s8##.value) in
-           Params.river_h := v; Overlay.set_band_heights ();
-           v8##.textContent := Js.Opt.return (Js.string (px_to_str v));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s8 (fun _ _ ->
+         let v = float_of_string (Js.to_string s8##.value) in
+         Params.river_h := v; Overlay.set_band_heights ();
+         v8##.textContent := Js.Opt.return (Js.string (px_to_str v)); Lwt.return_unit));
    
        let (_r9, v9, s9) = add_row p "Hospital height (px)" in
        set_attr s9 "min" "40"; set_attr s9 "max" "300"; set_attr s9 "step" "5";
        set_attr s9 "value" (string_of_int (int_of_float !(Params.hospital_h)));
        v9##.textContent := Js.Opt.return (Js.string (px_to_str !(Params.hospital_h)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s9 (fun _ _ ->
-           let v = float_of_string (Js.to_string s9##.value) in
-           Params.hospital_h := v; Overlay.set_band_heights ();
-           v9##.textContent := Js.Opt.return (Js.string (px_to_str v));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s9 (fun _ _ ->
+         let v = float_of_string (Js.to_string s9##.value) in
+         Params.hospital_h := v; Overlay.set_band_heights ();
+         v9##.textContent := Js.Opt.return (Js.string (px_to_str v)); Lwt.return_unit));
    
        let (_r10, v10, s10) = add_row p "Difficulty step (per 0.5s)" in
        set_attr s10 "min" "0.0"; set_attr s10 "max" "0.05"; set_attr s10 "step" "0.001";
        set_attr s10 "value" (float_to_str !(Params.difficulty_step));
        v10##.textContent := Js.Opt.return (Js.string (float_to_str !(Params.difficulty_step)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s10 (fun _ _ ->
-           let f = float_of_string (Js.to_string s10##.value) in
-           Params.difficulty_step := f;
-           v10##.textContent := Js.Opt.return (Js.string (float_to_str f));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s10 (fun _ _ ->
+         let f = float_of_string (Js.to_string s10##.value) in
+         Params.difficulty_step := f; v10##.textContent := Js.Opt.return (Js.string (float_to_str f)); Lwt.return_unit));
    
        let (_r11, v11, s11) = add_row p "Initial creets (at Play)" in
        set_attr s11 "min" "4"; set_attr s11 "max" "40"; set_attr s11 "step" "1";
        set_attr s11 "value" (string_of_int !(Params.initial_creets));
        v11##.textContent := Js.Opt.return (Js.string (string_of_int !(Params.initial_creets)));
-       Lwt.async (fun () ->
-         Lwt_js_events.inputs s11 (fun _ _ ->
-           let v = int_of_string (Js.to_string s11##.value) in
-           Params.initial_creets := v;
-           v11##.textContent := Js.Opt.return (Js.string (string_of_int v));
-           Lwt.return_unit));
+       Lwt.async (fun () -> Lwt_js_events.inputs s11 (fun _ _ ->
+         let v = int_of_string (Js.to_string s11##.value) in
+         Params.initial_creets := v; v11##.textContent := Js.Opt.return (Js.string (string_of_int v)); Lwt.return_unit));
        ()
-     
+   
      let toggle () =
        let p = ensure_panel () in
-       if Js.to_string p##.style##.display = "none" then (
-         p##.style##.display := Js.string "block";
+       if Js.to_bool (p##.classList##contains (Js.string "is-hidden")) then (
+         p##.classList##remove (Js.string "is-hidden");
          if p##.childNodes##.length = 0 then make_sliders p
        ) else (
-         p##.style##.display := Js.string "none"
+         p##.classList##add (Js.string "is-hidden")
        )
    end
    
@@ -1093,47 +934,28 @@
            let x = Random.float (max 1. (w -. Const.base_size)) in
            let y = Random.float (max 1. (h -. Const.base_size)) in
            let c = Creet.create ~id:i ~x ~y () in
-           World.add c;
-           Movement.start c;
-           Movement.start_reproduction c;
+           World.add c; Movement.start c; Movement.start_reproduction c;
          done;
        )
    
-     (* Replay: ayarlar korunur; sahne temizlenir; epoch artar *)
      let replay () =
-       (* GAME OVER panelini gizle *)
        (match Js.Opt.to_option (Dom_html.document##getElementById (Js.string "gameover")) with
-        | Some g -> g##.style##.display := Js.string "none"
+        | Some g -> Js.Opt.iter g##.parentNode (fun p -> ignore (Dom.removeChild p (g :> Dom.node Js.t)))
         | None -> ());
-       (* Yeni oyun: epoch arttır *)
        Session.epoch := !Session.epoch + 1;
-       (* Eski creet DOM’larını kaldır *)
-       World.all ()
-       |> List.iter (fun c ->
-            Js.Opt.iter c.Creet.elt##.parentNode (fun p ->
-              ignore (Dom.removeChild p (c.Creet.elt :> Dom.node Js.t))));
+       World.all () |> List.iter (fun c ->
+         Js.Opt.iter c.Creet.elt##.parentNode (fun p -> ignore (Dom.removeChild p (c.Creet.elt :> Dom.node Js.t))));
        World.creets := [];
-       (* Sayaç ve durumlar *)
-       Stats.dead_total := 0;
-       Stats.refresh ();
-       Config.paused := false;
-       Runtime.game_over := false;
-       Runtime.game_started := true;
-       Difficulty.base := 1.0;
-       (* Collider ve sayaç restart *)
-       Timer.start ();
-       Collider.start ();
-       (* Yeni nüfus *)
-       let w = float_of_int Dom_html.window##.innerWidth
-       and h = float_of_int Dom_html.window##.innerHeight in
+       Stats.dead_total := 0; Stats.refresh ();
+       Config.paused := false; Runtime.game_over := false; Runtime.game_started := true;
+       Difficulty.base := 1.0; Timer.start (); Collider.start ();
+       let w = float_of_int Dom_html.window##.innerWidth and h = float_of_int Dom_html.window##.innerHeight in
        Random.self_init ();
        for i=1 to !(Params.initial_creets) do
          let x = Random.float (max 1. (w -. Const.base_size)) in
          let y = Random.float (max 1. (h -. Const.base_size)) in
          let c = Creet.create ~id:i ~x ~y () in
-         World.add c;
-         Movement.start c;
-         Movement.start_reproduction c;
+         World.add c; Movement.start c; Movement.start_reproduction c;
        done
    end
    
@@ -1155,30 +977,14 @@
    
    (* ─────────────────────────────────────────────────────────────────────────── *)
    let%client _ =
-     let open Js_of_ocaml in
      Lwt.async (fun () ->
        let%lwt _ = Js_of_ocaml_lwt.Lwt_js_events.onload () in
-   
-       let body = Dom_html.document##.body in
-       body##.style##.margin   := Js.string "0";
-       body##.style##.overflow := Js.string "hidden";
-       let sim = Dom_html.getElementById "sim" in
-       sim##.style##.position := Js.string "fixed";
-       sim##.style##.top      := Js.string "0";
-       sim##.style##.left     := Js.string "0";
-       sim##.style##.right    := Js.string "0";
-       sim##.style##.bottom   := Js.string "0";
-       sim##.style##.background := Js.string "#111";
-   
-       (* Replay butonu için callback bağla *)
-       Callbacks.on_replay := (fun () -> Game.replay ());
-   
+       let _ = Overlay.init_bands () in
        Stats.refresh ();
-       Overlay.init_bands ();
        Overlay.init_pause_button ();
        Overlay.init_menu_button ~on_click:(fun () -> Settings.toggle ());
+       Callbacks.on_replay := (fun () -> Game.replay ());
        Overlay.show_play_overlay ~on_play:(fun () -> Game.start ());
-   
        Lwt.return_unit
      )
    
