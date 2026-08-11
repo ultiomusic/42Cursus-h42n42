@@ -1,13 +1,5 @@
 services:
   h42n42:
     build: .
-    image: h42n42:latest
     ports:
       - "8080:8080"
-    volumes:
-      - h42n42-log:/app/local/var/log/h42n42
-      - h42n42-data:/app/local/var/data/h42n42
-
-volumes:
-  h42n42-log:
-  h42n42-data:

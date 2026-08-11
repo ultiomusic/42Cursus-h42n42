@@ -1,433 +1,60 @@
-/* ==========================================================================
-   h42n42 — Ultra UI v3
-   - Doldurma (filled) ikonlar, menü açıkken X (close) ikonu
-   - Creet’ler daha opak (şeffaflık azaltıldı)
-   - River her zaman görselde hospital’ın üstünde
-   ========================================================================== */
+* { box-sizing: border-box; }
 
-   :root{
-    /* Renk paleti */
-    --bg-0: #070a12;
-    --bg-1: #0b1020;
-    --bg-2: #0d1530;
-    --grid: rgba(255,255,255,0.04);
-    --glass: rgba(255,255,255,0.06);
-    --glass-strong: rgba(255,255,255,0.12);
-  
-    --txt: #e8f0ff;
-    --muted: #a8b2c3;
-  
-    --healthy: #66e4ff;
-    --infected: #ff7a66;
-    --mean: #ffd166;
-    --berserk: #e66bff;
-    --dead: #808080;
-  
-    --accent: #7afcff;
-    --primary: #8ab4ff;
-  
-    --shadow-strong: 0 6px 20px rgba(0,0,0,0.45);
-    --shadow-soft: 0 8px 32px rgba(0,0,0,0.35);
-  
-    /* Mat/Opak ayarları (şeffaflığı azalttık) */
-    --creet-gloss-1: 0.50;  /* 0.55’ten biraz daha mat */
-    --creet-gloss-2: 0.10;
-    --creet-gloss-3: 0.06;
-    --creet-ambient: 0.22;  /* 0.12 → 0.22 (daha opak) */
-  
-    /* Boyutlar */
-    --hud-pad: 10px 14px;
-    --hud-radius: 14px;
-    --btn-radius: 16px;
-  
-    /* Katmanlar */
-    --z-sim: 0;
-    --z-bands: 2;
-    --z-creets: 3;
-    --z-hud: 4;
-    --z-controls: 5;
-    --z-overlay: 9;
-    --z-settings: 8;
-  
-    --blur: saturate(140%) blur(10px);
-  }
-  
-  *{ box-sizing:border-box; }
-  html,body{ height:100%; }
-  html,body{
-    margin:0;
-    color:var(--txt);
-    font: 500 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji","Segoe UI Emoji";
-    background:
-      radial-gradient(1200px 800px at 80% -10%, rgba(122,252,255,0.10), transparent 60%),
-      radial-gradient(1000px 700px at 0% 120%, rgba(138,180,255,0.08), transparent 60%),
-      linear-gradient(180deg, var(--bg-2), var(--bg-0));
-    overflow:hidden;
-  }
-  
-  /* SIM (oyun alanı) -------------------------------------------------------- */
-  #sim{
-    position:relative;
-    width:100vw;
-    height:100vh;
-    isolation:isolate;
-    z-index:var(--z-sim);
-  }
-  
-  /* İnce grid ve ambient glow */
-  #sim::before,
-  #sim::after{
-    content:"";
-    position:absolute; inset:0;
-    pointer-events:none;
-  }
-  #sim::before{
-    background:
-      linear-gradient(transparent 31px, var(--grid) 32px),
-      linear-gradient(90deg, transparent 31px, var(--grid) 32px);
-    background-size:32px 32px;
-    opacity:0.35;
-    mix-blend-mode:overlay;
-  }
-  #sim::after{
-    background:
-      radial-gradient(1200px 700px at 50% -20%, rgba(122,252,255,0.10), transparent 60%),
-      radial-gradient(800px 600px at 20% 120%, rgba(255,122,102,0.08), transparent 60%);
-    filter: blur(40px);
-    opacity:0.5;
-    transform: translateZ(0);
-  }
-  
-  /* Bantlar -------------------------------------------------------------- */
-  .band{
-    position:absolute; left:0; right:0;
-    pointer-events:none;
-  }
-  
-  /* River: ZİRVEDİR (hospital’dan daha üstte) */
-  .band--river{
-    top:0;
-    z-index: 3; /* hospital’dan büyük */
-    background:
-      radial-gradient(120px 60px at 10% 40%, rgba(255,255,255,0.15), transparent 60%) repeat-x,
-      linear-gradient(180deg, rgba(122,252,255,0.32), rgba(17,40,58,0.65)),
-      linear-gradient(90deg, rgba(122,252,255,0.16) 0 12%, transparent 12% 24%) repeat;
-    background-size: 240px 100%, 100% 100%, 160px 100%;
-    animation: river-flow 12s linear infinite;
-    box-shadow: 0 8px 24px rgba(0,180,255,0.25);
-    position: relative;
-  }
-  .band--river::before,
-  .band--river::after{
-    content:""; position:absolute; inset:0; pointer-events:none;
-  }
-  .band--river::before{
-    background:
-      radial-gradient(160px 70px at 15% 60%, rgba(255,255,255,0.10), transparent 65%) repeat-x;
-    background-size: 320px 100%;
-    animation: river-flow-slow 18s linear infinite;
-    opacity:.9;
-  }
-  .band--river::after{
-    background:
-      linear-gradient(0deg, rgba(255,255,255,0.10), rgba(0,0,0,0.0) 30% 70%, rgba(255,255,255,0.10));
-    mix-blend-mode:soft-light;
-    animation: river-breathe 5s ease-in-out infinite;
-    opacity:.6;
-  }
-  @keyframes river-flow{
-    0%{ background-position: 0 0, 0 0, 0 0; }
-    100%{ background-position: 240px 0, 0 0, 160px 0; }
-  }
-  @keyframes river-flow-slow{
-    0%{ background-position: 0 0; }
-    100%{ background-position: 320px 0; }
-  }
-  @keyframes river-breathe{
-    0%,100%{ opacity:.45; }
-    50%{ opacity:.75; }
-  }
-  
-  /* Hospital: görselde river’ın ALTINDA */
-  .band--hospital{
-    bottom:0;
-    z-index: 2; /* river’dan küçük */
-    background:
-      repeating-linear-gradient(135deg,
-        rgba(0,0,0,0.06) 0 10px, rgba(0,0,0,0.00) 10px 20px),
-      linear-gradient(180deg, rgba(46,255,160,0.35), rgba(12,58,41,0.65));
-    box-shadow: 0 -8px 24px rgba(46,255,160,0.22);
-    position:relative;
-  }
-  .band--hospital::after{
-    content:"";
-    position:absolute;
-    left:18px; bottom:14px;
-    width:72px; height:72px;
-    border-radius:16px;
-    background:
-      radial-gradient(closest-side, rgba(46,255,160,0.35), transparent 70%),
-      linear-gradient(transparent calc(50% - 8px), #31ffa1 calc(50% - 8px) calc(50% + 8px), transparent calc(50% + 8px)),
-      linear-gradient(90deg, transparent calc(50% - 8px), #31ffa1 calc(50% - 8px) calc(50% + 8px), transparent calc(50% + 8px));
-    box-shadow: 0 8px 26px rgba(46,255,160,0.45), inset 0 0 0 1px rgba(255,255,255,0.12);
-    opacity:.95;
-  }
-  
-  /* Creet’ler (daha opak) --------------------------------------------------- */
-  .creet{
-    position:absolute;
-    border-radius:50%;
-    transform: translateZ(0);
-    will-change: left, top, width, height, box-shadow, filter, opacity;
-    z-index:var(--z-creets);
-    pointer-events:auto;
-  
-    background:
-      radial-gradient(circle at 35% 30%, rgba(255,255,255,var(--creet-gloss-1)) 0 10%, transparent 11%),
-      radial-gradient(circle at 65% 70%, rgba(255,255,255,var(--creet-gloss-2)), transparent 45%),
-      radial-gradient(circle at 50% 50%, rgba(255,255,255,var(--creet-gloss-3)), transparent 40%),
-      rgba(255,255,255,var(--creet-ambient));
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), var(--shadow-strong);
-    filter: saturate(0.92) contrast(0.99);
-  }
-  .creet::after{
-    content:"";
-    position:absolute; inset:0; border-radius:50%;
-    background:
-      radial-gradient(1px 1px at 20% 30%, rgba(255,255,255,0.04), transparent 50%),
-      radial-gradient(1px 1px at 60% 70%, rgba(0,0,0,0.04), transparent 50%),
-      radial-gradient(1px 1px at 80% 40%, rgba(255,255,255,0.03), transparent 50%);
-    opacity:.5; pointer-events:none;
-  }
-  /* durum renkleri: opaklık arttırıldı */
-  .creet.healthy{
-    background-color: rgba(102,228,255,0.28); /* 0.14 → 0.28 */
-    box-shadow: 0 0 14px rgba(102,228,255,0.22), inset 0 0 0 1px rgba(255,255,255,0.06);
-  }
-  .creet.infected{
-    background-color: rgba(255,122,102,0.30); /* 0.16 → 0.30 */
-    box-shadow: 0 0 18px rgba(255,122,102,0.32), inset 0 0 0 1px rgba(255,255,255,0.06);
-    animation: sickPulse 1.6s ease-in-out infinite;
-  }
-  .creet.mean{
-    background-color: rgba(255,209,102,0.30);
-    box-shadow: 0 0 18px rgba(255,209,102,0.32), inset 0 0 0 1px rgba(255,255,255,0.06);
-    animation: meanPulse 1.25s ease-in-out infinite;
-  }
-  .creet.berserk{
-    background-color: rgba(230,107,255,0.32);
-    box-shadow: 0 0 22px rgba(230,107,255,0.42), inset 0 0 0 1px rgba(255,255,255,0.06);
-    animation: ragePulse 1.15s ease-in-out infinite;
-  }
-  .creet.grabbed{
-    outline: 3px solid rgba(255,255,255,0.30);
-    filter: saturate(1.05) drop-shadow(0 6px 28px rgba(0,0,0,0.25));
-    cursor: grabbing !important;
-  }
-  @keyframes sickPulse{
-    0%,100%{ filter: drop-shadow(0 0 8px rgba(255,122,102,0.34)); }
-    50%{    filter: drop-shadow(0 0 16px rgba(255,122,102,0.64)); }
-  }
-  @keyframes meanPulse{
-    0%,100%{ filter: drop-shadow(0 0 7px rgba(255,209,102,0.38)); }
-    50%{    filter: drop-shadow(0 0 15px rgba(255,209,102,0.74)); }
-  }
-  @keyframes ragePulse{
-    0%,100%{ filter: drop-shadow(0 0 10px rgba(230,107,255,0.58)); }
-    50%{    filter: drop-shadow(0 0 20px rgba(230,107,255,0.88)); }
-  }
-  
-  /* HUD --------------------------------------------------------------------- */
-  .hud{
-    position:fixed; top:14px; left:16px;
-    display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-    padding: var(--hud-pad);
-    border-radius: var(--hud-radius);
-    background: var(--glass);
-    backdrop-filter: var(--blur);
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
-    z-index:var(--z-hud);
-    user-select:none;
-  }
-  .hud span{ color:var(--muted); }
-  .hud .hud__val{
-    color:var(--txt);
-    font-weight:700;
-    padding:2px 8px;
-    border-radius:10px;
-    background: rgba(255,255,255,0.06);
-  }
-  
-  /* Butonlar (Pause, Menu, Play, Replay) ----------------------------------- */
-  .btn{
-    font-weight:700;
-    border:none;
-    border-radius: var(--btn-radius);
-    padding:10px 16px 10px 42px; /* ikon alanı */
-    color:#0b0f1a;
-    background: linear-gradient(180deg, #d7e3ff, #a9c1ff);
-    box-shadow: 0 6px 20px rgba(138,180,255,0.35), inset 0 -2px 0 rgba(0,0,0,0.15);
-    cursor:pointer;
-    position:relative;
-    transition: transform .08s ease, box-shadow .2s ease, filter .2s ease;
-  }
-  .btn:hover{ transform: translateY(-1px); box-shadow: 0 8px 24px rgba(138,180,255,0.45); }
-  .btn:active{ transform: translateY(0); }
-  
-  .btn::before{
-    content:"";
-    position:absolute; left:12px; top:50%; transform: translateY(-50%);
-    width:20px; height:20px; opacity:0.95;
-    background-size: contain; background-repeat:no-repeat;
-    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.15));
-    transition: transform .18s ease, opacity .18s ease;
-  }
-  .btn:hover::before{ transform: translateY(-50%) scale(1.06); opacity:1; }
-  
-  .btn--primary{
-    background: linear-gradient(180deg, #7afcff, #37d7d9);
-    color:#08232a;
-    box-shadow: 0 8px 28px rgba(58,224,232,0.35);
-  }
-  
-  /* Filled ikonlar */
-  .btn--pause::before{
-    background-image: url("data:image/svg+xml;utf8,\
-    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2308232a'>\
-    <rect x='5' y='4' width='5' height='16' rx='2'/>\
-    <rect x='14' y='4' width='5' height='16' rx='2'/>\
-    </svg>");
-  }
-  
-  .btn--menu{
-    position:fixed; top:14px; right:16px; z-index:var(--z-controls);
-    width:44px; height:40px; padding-left:16px;
-  }
-  .btn--menu::before{
-    left:50%; transform: translate(-50%,-50%);
-    width:24px; height:24px;
-    /* hamburger (filled) */
-    background-image: url("data:image/svg+xml;utf8,\
-    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2308232a'>\
-    <rect x='3' y='5' width='18' height='3' rx='1.5'/>\
-    <rect x='3' y='10.5' width='18' height='3' rx='1.5'/>\
-    <rect x='3' y='16' width='18' height='3' rx='1.5'/>\
-    </svg>");
-  }
-  .btn--menu.is-open::before{
-    /* close (filled) */
-    background-image: url("data:image/svg+xml;utf8,\
-    <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2308232a'>\
-    <path d='M6 6h0a2 2 0 012.83 0L12 9.17 15.17 6A2 2 0 1118 8.83L14.83 12 18 15.17A2 2 0 1115.17 18L12 14.83 8.83 18A2 2 0 116 15.17L9.17 12 6 8.83A2 2 0 016 6z'/>\
-    </svg>");
-  }
-  
-  /* Pause butonu konum */
-  .btn--pause{
-    position:fixed; top:14px; right:72px; z-index:var(--z-controls);
-  }
-  
-  /* Overlay’ler ------------------------------------------------------------- */
-  .overlay{
-    position:fixed; inset:0;
-    display:flex; align-items:center; justify-content:center;
-    background: rgba(2,4,10,0.35);
-    backdrop-filter: var(--blur);
-    z-index:var(--z-overlay);
-  }
-  .overlay.is-hidden{ display:none; }
-  
-  .overlay--play .btn--play{
-    font-size:20px; padding:14px 28px 14px 52px;
-    background: linear-gradient(180deg, #d8fffb, #7afcff);
-    color:#04232f;
-    box-shadow: 0 10px 36px rgba(122,252,255,0.45);
-    animation: gentlePop .85s ease both;
-  }
-  @keyframes gentlePop{
-    0%{ transform: scale(.98); opacity:0; }
-    100%{ transform: scale(1); opacity:1; }
-  }
-  
-  /* Game over paneli */
-  #gameover .gameover__box{
-    min-width: min(90vw, 520px);
-    padding:32px 28px;
-    border-radius: 20px;
-    background: var(--glass);
-    border: 1px solid rgba(255,255,255,0.10);
-    backdrop-filter: var(--blur);
-    box-shadow: var(--shadow-soft);
-    text-align:center;
-  }
-  #gameover .gameover__title{
-    font-size: clamp(28px, 4vw, 44px);
-    letter-spacing: .08em;
-    font-weight: 900;
-    margin-bottom: 6px;
-    background: linear-gradient(90deg, #ff8a66, #ffca66, #e66bff, #7afcff);
-    -webkit-background-clip:text; background-clip:text; color:transparent;
-    text-shadow: 0 0 14px rgba(255,255,255,0.25);
-  }
-  #gameover .gameover__time{
-    color:var(--muted);
-    margin-bottom:18px;
-  }
-  
-  /* Settings panel ---------------------------------------------------------- */
-  .settings{
-    position:fixed; top:0; right:0; height:100vh; width:min(380px, 92vw);
-    padding:18px 16px 24px;
-    background: var(--glass);
-    border-left: 1px solid rgba(255,255,255,0.10);
-    backdrop-filter: var(--blur);
-    box-shadow: -8px 0 28px rgba(0,0,0,0.35);
-    z-index:var(--z-settings);
-    transform: translateX(0);
-    transition: transform .25s ease;
-  }
-  .settings.is-hidden{ transform: translateX(110%); }
-  
-  .settings__row{
-    display:flex; align-items:center; gap:12px;
-    padding:10px 8px; margin:8px 0;
-    border-radius:12px;
-    background: rgba(255,255,255,0.06);
-  }
-  .settings__label{ flex: 1 1 auto; color:var(--muted); }
-  .settings__value{
-    min-width:68px; text-align:right;
-    padding:4px 8px; border-radius:10px;
-    background: rgba(255,255,255,0.08);
-    color:var(--txt); font-weight:700;
-  }
-  .settings__slider{
-    -webkit-appearance:none; appearance:none;
-    width:100%; height:6px; border-radius:9999px;
-    background: linear-gradient(90deg, #7afcff, #8ab4ff);
-    outline:none; opacity:0.95;
-  }
-  .settings__slider::-webkit-slider-thumb{
-    -webkit-appearance:none; appearance:none;
-    width:18px; height:18px; border-radius:50%;
-    background: #fff;
-    box-shadow: 0 4px 16px rgba(122,252,255,0.45);
-    cursor:pointer;
-  }
-  .settings__slider::-moz-range-thumb{
-    width:18px; height:18px; border-radius:50%;
-    background:#fff; border:none;
-    box-shadow: 0 4px 16px rgba(122,252,255,0.45);
-    cursor:pointer;
-  }
-  
-  /* Küçük ekran uyumu ------------------------------------------------------- */
-  @media (max-width: 560px){
-    .hud{ left:10px; right:10px; gap:8px; }
-    .btn--pause{ right:66px; }
-  }
-  
-  /* Yardımcı ---------------------------------------------------------------- */
-  .is-hidden{ display:none !important; }
-  
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body { background: #101827; color: white; font-family: sans-serif; }
+
+#game {
+  position: relative;
+  width: calc(100vw - 24px);
+  height: calc(100vh - 24px);
+  margin: 12px;
+  overflow: visible;
+  background: #253651;
+  border: 1px solid white;
+  user-select: none;
+}
+
+.river, .hospital {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  font-weight: bold;
+}
+
+.river { top: 0; height: 72px; background: #14759a; }
+.hospital { bottom: 0; height: 92px; background: #1c7b57; }
+
+.creet {
+  position: absolute;
+  z-index: 2;
+  border: 2px solid white;
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.healthy { background: #46d887; }
+.sick { background: #ff715b; }
+.berserk { background: #bb59e8; cursor: not-allowed; }
+.mean { background: #ffc857; cursor: not-allowed; }
+.dragging { outline: 4px solid white; cursor: grabbing; }
+
+.game-over {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: #101827;
+}
+
+.game-over.visible { display: grid; }
+.game-over h1 { font-size: 4rem; color: #ff715b; }
