@@ -3,7 +3,9 @@ FROM ocaml/opam:ubuntu-22.04-ocaml-5.2
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libgmp-dev libsqlite3-dev libssl-dev pkg-config zlib1g-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /home/opam/app \
+    && chown opam:opam /home/opam/app
 USER opam
 
 WORKDIR /home/opam/app
